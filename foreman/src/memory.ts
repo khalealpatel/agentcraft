@@ -2,6 +2,7 @@
 //
 //   memory/shared/<slug>.md
 //   memory/agents/<agentId>/<slug>.md
+//   memory/lanes/<slug>.md          lane records (the mirror backend), scope "lanes"
 //
 // Each file starts with a tiny front matter block (title/author/updated). Files the user drops in
 // or edits by hand are picked up too (title falls back to the first heading or the file name).
@@ -13,6 +14,9 @@ import { ensureDir, writeFileAtomic } from './util/fsx.js';
 import { slugify } from './util/text.js';
 
 export class MemoryError extends Error {}
+
+/** Scopes stored in their own top-level directory (memory/<scope>/) instead of memory/agents/<id>/. */
+const TOP_SCOPES = ['shared', 'lanes'];
 
 interface Parsed {
   title?: string;
@@ -63,7 +67,7 @@ export class Memory {
 
   private fileFor(id: string): string {
     const [scope, slug] = this.splitId(id);
-    return scope === 'shared' ? path.join(this.dir, 'shared', `${slug}.md`) : path.join(this.dir, 'agents', scope, `${slug}.md`);
+    return TOP_SCOPES.includes(scope) ? path.join(this.dir, scope, `${slug}.md`) : path.join(this.dir, 'agents', scope, `${slug}.md`);
   }
 
   private splitId(id: string): [string, string] {
@@ -98,7 +102,7 @@ export class Memory {
         this.entries.set(e.id, e);
       }
     };
-    load('shared', path.join(this.dir, 'shared'));
+    for (const scope of TOP_SCOPES) load(scope, path.join(this.dir, scope));
     const agentsDir = path.join(this.dir, 'agents');
     for (const a of fs.existsSync(agentsDir) ? fs.readdirSync(agentsDir) : []) {
       if (/^[a-z0-9_-]+$/i.test(a)) load(a, path.join(agentsDir, a));

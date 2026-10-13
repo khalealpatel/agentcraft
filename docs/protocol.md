@@ -26,7 +26,7 @@
 - <a id="feedkind"></a>**FeedKind**: `goal`, `plan`, `task`, `message`, `decision`, `merge`, `ci`, `memory`, `system`, `error`, `user`
 - <a id="notifylevel"></a>**NotifyLevel**: `info`, `warn`, `need_user`
 - <a id="worktreestatus"></a>**WorktreeStatus**: `active`, `merged`, `abandoned`
-- <a id="backendname"></a>**BackendName**: `sim`, `claude`, `codex`
+- <a id="backendname"></a>**BackendName**: `sim`, `claude`, `codex`, `mirror` - `mirror` = a read-only view of your own Claude Code sessions (the mirror hook); it runs no agents.
 - <a id="authstatus"></a>**AuthStatus**: `ok`, `failed`, `unknown`, `checking` - `failed` must be shown loudly (in-world banner): the claude backend cannot run.
 
 Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; permission decisions use `Allow once`, `Always allow for this agent`, `Deny`. Question decisions use agent-supplied options (may be empty: free text).
@@ -146,8 +146,8 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 
 | field | type | required | notes |
 | --- | --- | --- | --- |
-| `id` | string | yes | "shared/<slug>" or "<agentId>/<slug>" |
-| `scope` | string | yes | "shared" or an agent id |
+| `id` | string | yes | "shared/<slug>", "<agentId>/<slug>" or "lanes/<slug>" |
+| `scope` | string | yes | "shared", an agent id, or "lanes" (lane records from the mirror backend) |
 | `title` | string | yes |  |
 | `body` | string | yes | markdown |
 | `updated` | integer | yes | epoch milliseconds |
@@ -180,7 +180,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | field | type | required | notes |
 | --- | --- | --- | --- |
 | `version` | string | yes |  |
-| `backend` | [BackendName](#backendname) | yes |  |
+| `backend` | [BackendName](#backendname) | yes | `mirror` = a read-only view of your own Claude Code sessions (the mirror hook); it runs no agents. |
 | `auth` | [AuthStatus](#authstatus) | yes | `failed` must be shown loudly (in-world banner): the claude backend cannot run. |
 | `message` | string | no | human-readable backend/auth status for the banner |
 | `account` | string | no | e.g. organization / plan when auth ok |
