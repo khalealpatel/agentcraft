@@ -79,6 +79,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `branch` | string | no | git branch, e.g. "agentcraft/kit/t2-tag-parser" |
 | `startBranch` | string | no | the worker's branch starts from this branch instead of the base, e.g. a fetched pull request "agentcraft/pr-12" |
 | `worktree` | string | no |  |
+| `zone` | string[] | no | repo-relative paths or globs the task may change (--zones suzy) |
 | `ci` | [CiStatus](#cistatus) | yes |  |
 | `blockedReason` | string | no |  |
 | `summary` | string | no | worker/lead summary of the result |

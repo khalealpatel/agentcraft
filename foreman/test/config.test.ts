@@ -42,6 +42,30 @@ describe('loadConfig argument checking', () => {
     }
   });
 
+  it('reads --setting-sources as a comma list or claude.settingSources; default none', () => {
+    home = tempDir();
+    const read = (args: string[]) => loadConfig(['--home', home!, ...args], {}).claude.settingSources;
+    expect(read([])).toEqual([]);
+    expect(read(['--setting-sources', 'project, local,project'])).toEqual(['project', 'local']);
+    expect(read(['--setting-sources=user'])).toEqual(['user']);
+    expect(() => read(['--setting-sources', 'project,global'])).toThrow(/unknown setting source "global" \(use user, project, local\)/);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ claude: { settingSources: ['project'] } }));
+    expect(read([])).toEqual(['project']);
+    expect(read(['--setting-sources', 'local'])).toEqual(['local']); // the flag wins
+  });
+
+  it('reads --zones suzy|off or claude.zones; default off', () => {
+    home = tempDir();
+    const read = (args: string[]) => loadConfig(['--home', home!, ...args], {}).claude.zones;
+    expect(read([])).toBe('off');
+    expect(read(['--zones', 'suzy'])).toBe('suzy');
+    expect(read(['--no-zones'])).toBe('off');
+    expect(() => read(['--zones', 'strict'])).toThrow(/unknown zones mode "strict" \(use suzy or off\)/);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ claude: { zones: 'suzy' } }));
+    expect(read([])).toBe('suzy');
+    expect(read(['--zones', 'off'])).toBe('off');
+  });
+
   it('accepts the sim flags launch.ps1 passes', () => {
     const cfg = load(['--backend', 'sim', '--profile', 'x', '--port', '41000', '--reset', '--showcase', 'late', '--speed', '2', '--autostart']);
     expect(cfg.sim.showcaseAt).toBe('showcase-late');

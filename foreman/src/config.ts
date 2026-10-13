@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { readJson } from './util/fsx.js';
 import type { BackendName } from './protocol.js';
 import { defaultUserName } from './user.js';
-import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
+import type { EffortLevel, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 
 export const FOREMAN_VERSION = '0.1.0';
 
@@ -38,7 +38,16 @@ export interface ClaudeConfig {
   useClaudeLogin: boolean;
   /** command prefixes the lead runs without asking, e.g. `bd show` */
   leadReadCommands: string[];
+  /**
+   * Claude Code settings the agents load (CLAUDE.md, skills, `.claude/settings.json` hooks and
+   * permission rules). Default none: agents see only AgentCraft's own instructions and policy.
+   */
+  settingSources: SettingSource[];
+  /** per-task write zones: `suzy` = every task carries a zone, handed to Suzy's zone hooks */
+  zones: ZoneMode;
 }
+
+export type ZoneMode = 'off' | 'suzy';
 
 export type EngineName = 'claude' | 'codex';
 export const ENGINE_NAMES: readonly EngineName[] = ['claude', 'codex'];
@@ -193,6 +202,23 @@ function mergeStyle(v: unknown): 'merge' | 'squash' {
   throw new Error(`unknown merge style "${String(v)}" (use merge or squash)`);
 }
 
+const SETTING_SOURCES: SettingSource[] = ['user', 'project', 'local'];
+/** "project,local" (flag) or ["project"] (config.json); each source at most once. */
+function settingSources(v: unknown): SettingSource[] {
+  const out: SettingSource[] = [];
+  for (const s of list(v)) {
+    if (!(SETTING_SOURCES as string[]).includes(s)) throw new Error(`unknown setting source "${s}" (use ${SETTING_SOURCES.join(', ')})`);
+    if (!out.includes(s as SettingSource)) out.push(s as SettingSource);
+  }
+  return out;
+}
+
+function zoneMode(v: unknown): ZoneMode {
+  if (v === undefined || v === false || v === 'off') return 'off';
+  if (v === 'suzy') return 'suzy';
+  throw new Error(`unknown zones mode "${String(v)}" (use suzy or off)`);
+}
+
 const EFFORTS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 function effort(v: unknown, d: EffortLevel): EffortLevel {
   if (v === undefined) return d;
@@ -207,7 +233,7 @@ export const KNOWN_FLAGS = new Set([
   'lead-model', 'worker-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
   'ambient', 'lead-read-commands', 'lead-engine', 'worker-engine', 'engines', 'codex-path', 'codex-model', 'codex-lead-model',
-  'codex-worker-model', 'codex-effort', 'codex-lead-effort',
+  'codex-worker-model', 'codex-effort', 'codex-lead-effort', 'setting-sources', 'zones',
 ]);
 
 function engineName(v: unknown, d: EngineName, what: string): EngineName {
@@ -310,6 +336,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       leadReview: bool(flags['lead-review'] ?? fileClaude.leadReview, true),
       useClaudeLogin: bool(flags['use-claude-login'] ?? env.AGENTCRAFT_USE_CLAUDE_LOGIN ?? fileClaude.useClaudeLogin, false),
       leadReadCommands: readCommands(flags['lead-read-commands'] ?? env.AGENTCRAFT_LEAD_READ_COMMANDS ?? fileClaude.leadReadCommands),
+      settingSources: settingSources(flags['setting-sources'] ?? fileClaude.settingSources),
+      zones: zoneMode(flags.zones ?? fileClaude.zones),
     },
     codex: {
       path: str(flags['codex-path']) ?? str(env.AGENTCRAFT_CODEX_PATH) ?? str(fileCodex.path),
@@ -384,6 +412,13 @@ usage: npm run start -- [options]
                            "bd show,gh issue view" (env AGENTCRAFT_LEAD_READ_COMMANDS)
   --no-lead-review         skip the lead's review turn before merge decisions
   --no-resume              do not resume interrupted sessions on start
+  --setting-sources <user,project,local>
+                           Claude Code settings the agents load: CLAUDE.md, skills, hooks and
+                           permission rules from those settings files (default: none; config.json
+                           claude.settingSources). The Foreman's auth check never loads them.
+  --zones suzy             every task gets a write zone (create_task "zone"), written where Suzy's
+                           zone hooks read it (SUZY_ZONE_FILE); merges outside the zone are refused
+                           (default off; config.json claude.zones)
 
  codex engine (--backend codex, or mixed teams)
   auth: your Codex login (\`codex login\`: ChatGPT or an OpenAI API key)

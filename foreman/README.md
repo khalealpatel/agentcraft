@@ -96,6 +96,8 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--ci "<cmd>"` | detected (`npm test`, `cargo test`, ...) | run after each task |
 | `--lead-read-commands "<cmd>,..."` | none | read commands the lead runs without asking, by prefix: `"bd show,gh issue view"` lets it read your issue tracker |
 | `--no-lead-review` | | merge decisions go to you without a lead review turn |
+| `--setting-sources user,project,local` / config `claude.settingSources` | none | Claude agents load those Claude Code settings: CLAUDE.md, skills, hooks and permission rules (see Repo rules and write zones) |
+| `--zones suzy` / config `claude.zones` | `off` | every task carries a write zone, handed to the repo's zone hooks and checked before a merge (see Repo rules and write zones) |
 | `--repo-poll-ms` | `10000` | how often checkouts are checked for head/dirty changes |
 | `--merge-style merge\|squash` / `AGENTCRAFT_MERGE_STYLE` | `merge` | approved merges: a merge commit that keeps the agents' commits, or one squashed commit (see Safety guarantees) |
 | `--no-sign-merges` / `AGENTCRAFT_SIGN_MERGES=0` | signed if your git config signs (claude) | never sign approved merge commits; the sim never signs |
@@ -190,7 +192,36 @@ session with your answer. Start-up then reconciles every open state: a goal stil
 nobody planning it is planned again (or activated if it has tasks), a task left `doing` with no
 turn behind it goes back on the board (its session resumes), a task in `review` without a merge
 decision gets CI + review again. SDK sessions are isolated from your own Claude Code settings
-(`settingSources: []`).
+(`settingSources: []`) unless `--setting-sources` says otherwise (below).
+
+### Repo rules and write zones (`--setting-sources`, `--zones suzy`)
+
+By default an agent sees only AgentCraft's own instructions and policy. `--setting-sources project`
+(or `user`, `local`, comma separated) makes every lead and worker turn load those Claude Code
+settings, so agents work under the repository's own CLAUDE.md, skills and `.claude/settings.json`
+hooks, exactly like a session you start there. The Foreman's auth check never loads them. Two
+things to know before turning it on:
+
+- Permission rules come along. A `deny` rule only adds restrictions, but an `allow` rule in those
+  settings lets the CLI run that tool call without asking AgentCraft's policy. `project` is the
+  usual choice; `user` brings your personal allow list with it.
+- Hooks run as the repository wrote them: the workers' in their worktree (the branch's copy of the
+  hooks), the lead's in your checkout. A hook that writes tracked files there (a ledger line, a
+  date stamp) dirties your checkout, and the Foreman refuses to merge into a dirty checkout.
+
+`--zones suzy` gives every task a write zone: repo-relative paths or globs (`"src/parser/"`,
+`"test/*.test.ts"`; a trailing `/` owns the directory, `*` also matches across `/`). The lead must
+pass `zone` to `create_task` (a task without one is refused with what to do) and can change it
+with `update_task(zone)`; a task without a zone (made before the flag was on) is blocked rather than
+started. The Foreman writes the zone in the format of Suzy's `zone.sh` to
+`<profile>/zones/<repo>/<worktree>.zone`, outside every git tree so it is never committed or merged,
+rewrites it at every worker turn (Suzy's hooks ignore a zone older than 24 h) and moves it with a
+handed-off task. Each worker's `SUZY_ZONE_FILE` points at its zone, the one location all of Suzy's
+zone readers (`deny-out-of-zone.sh`, `zone-commit-gate.sh`, `subagent-gate.sh`) check first, so the
+worker's edits and commits outside it are refused by the repository's own hooks. Since the Foreman
+commits a worker's leftovers itself (`git add -A`, which no commit hook sees), `request_merge` also
+refuses a branch that changes files outside the zone, naming them. Use it together with
+`--setting-sources project`; without the hooks loaded only the merge check applies.
 
 A failed turn (API error, max turns, timeout) shows the agent as `error` and blocks its task with
 the reason; `/task t3 retry` puts it back on the board.
@@ -317,6 +348,7 @@ spawns git with an empty environment); the policy refuses every command it can s
   memory/shared/*.md     shared notes (hand-editable)
   memory/agents/<id>/*.md
   worktrees/<repo>/<agent>-<task>/
+  zones/<repo>/<agent>-<task>.zone   write zones (--zones suzy)
 ```
 
 ## Protocol

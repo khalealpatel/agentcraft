@@ -70,7 +70,8 @@ export class ClaudeEngine implements Engine {
       model: this.model(role),
       effort: role === 'lead' ? this.cfg.leadEffort : this.cfg.effort,
       maxTurns: role === 'lead' ? this.cfg.maxTurnsLead : this.cfg.maxTurnsWorker,
-      settingSources: [],
+      // none by default; --setting-sources loads the repo's own rules (CLAUDE.md, skills, hooks)
+      settingSources: [...this.cfg.settingSources],
       permissionMode: 'default',
       canUseTool,
       // the lead's Bash is read-only: the policy asks before anything that writes
