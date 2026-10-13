@@ -8,6 +8,8 @@ const wt = path.join(os.tmpdir(), 'ac-policy', 'worktrees', 'demo-app', 'kit-t2'
 const outside = path.join(os.tmpdir(), 'ac-policy', 'elsewhere', 'secret.txt');
 const home = os.homedir();
 const homeFwd = home.replace(/\\/g, '/');
+// an absolute system path on this platform (C:/Windows is a relative path on macOS and Linux)
+const systemDir = process.platform === 'win32' ? 'C:/Windows' : '/etc';
 const gitBashHome = process.platform === 'win32' ? `/${homeFwd[0]!.toLowerCase()}${homeFwd.slice(2)}` : homeFwd;
 // tempDirs: [] so paths under the OS temp dir count as "outside" in these rows
 const worker: PolicyContext = { role: 'worker', cwd: wt, tempDirs: [] };
@@ -375,7 +377,7 @@ const rows: Row[] = [
   ['ps set-content inside', 'PowerShell', { command: 'Set-Content -Path src/x.ts -Value hi' }, worker, 'allow'],
   ['ps set-content positional', 'PowerShell', { command: 'Set-Content src/x.ts "hi there"' }, worker, 'allow'],
   ['ps out-file outside', 'PowerShell', { command: 'Get-Content src/cli.ts | Out-File ../../outside.txt' }, worker, 'ask'],
-  ['ps set-content outside', 'PowerShell', { command: 'Set-Content -Path C:/Windows/x.txt -Value hi' }, worker, 'ask'],
+  ['ps set-content outside', 'PowerShell', { command: `Set-Content -Path ${systemDir}/x.txt -Value hi` }, worker, 'ask'],
   ['ps lead filters', 'PowerShell', { command: 'Get-ChildItem src -Recurse | Select-Object FullName' }, lead, 'allow'],
   ['ps lead set-content', 'PowerShell', { command: 'Set-Content -Path src/x.ts -Value hi' }, lead, 'ask'],
 ];
