@@ -44,6 +44,9 @@ npm run start -- --backend sim --reset --speed 2
 npm run start -- --backend sim --profile showcase --reset --showcase            # busy mid-run
 npm run start -- --backend sim --profile showcase-late --reset --showcase late  # blocked/error/done
 
+# read-only mirror of your own Claude Code sessions (the mirror hook; no agents, no API calls)
+npm run start -- --backend mirror --profile mirror
+
 # terminal client that connects exactly like the mod
 npm run tui
 ```
@@ -347,6 +350,7 @@ spawns git with an empty environment); the policy refuses every command it can s
                          into <agent>.1.jsonl (one old file kept); start-up reads only their ends
   memory/shared/*.md     shared notes (hand-editable)
   memory/agents/<id>/*.md
+  memory/lanes/*.md      lane records (mirror backend)
   worktrees/<repo>/<agent>-<task>/
   zones/<repo>/<agent>-<task>.zone   write zones (--zones suzy)
 ```
@@ -358,6 +362,29 @@ tables and a JSON example per message (`npm run gen:protocol-doc`; `npm run chec
 fails if it is stale). Highlights beyond the spec draft: `foreman.status` (backend/auth banner),
 `ack`/`error` replies for messages with an `id`, `snapshot.logs`/`snapshot.goals`,
 `Agent.active/paused/worktree/title`, task status `cancelled`, decision status `cancelled`.
+
+## The mirror backend
+
+`--backend mirror --profile mirror` shows the Claude Code sessions you run yourself, from the
+events `tools/mirror/hook.mjs` (a user-level Claude Code hook, installed with
+`node tools/suzy.mjs mirror install`) appends to `<home>/mirror/events.jsonl`. It runs no agents,
+no commands and no git, creates no decisions, refuses goals, and writes only through the
+Foreman into its profile (which is that same `<home>/mirror` directory; `--reset` keeps the
+hook's files and rebuilds the world from the log).
+
+`src/agents/mirror/` tails the log from a cursor (the file's inode and a byte offset, saved in
+`state.json` with what it applied, so a rotation or restart neither skips nor repeats an event)
+and maps each event through the normal primitives: SessionStart puts the next free cast member
+on shift (workers first, Marlow last; more than six live sessions get cards without an avatar),
+the first prompt's lane ID (`# FIRING BRIEF: <ID>` or ``Name `<ID>` ``) titles a `doing` task
+card, PreToolUse goes through `toolActivity()` like the other backends, PostToolUse and
+PostToolUseFailure add one monitor line with ok or error, test commands drive the task's CI,
+`git push` and `gh pr create` go to the merge station and the feed, a Notification puts the
+agent at the user station (display only), Stop moves the card to `review` and the agent to the
+lounge, and SessionEnd or 30 minutes without events takes it off shift. On Stop and off shift it
+writes the lane record `memory/lanes/<lane>.md` (scope `lanes`): repo, branch, agent, times,
+files touched, test runs, PR, errors; never prompt text, contents or output, and scrubbed again
+with the hook's own rules.
 
 ## The sim backend
 
@@ -387,7 +414,8 @@ The repo id is the demo dir name: `sim-demo-showcase` / `sim-demo-showcase-late`
 ```sh
 npm test            # vitest: protocol, task graph, persistence, decisions, repos/merges, policy,
                     #         git push block, WS + full sim run, showcase states, claude
-                    #         orchestration, restart recovery and steering (fake SDK)
+                    #         orchestration, restart recovery and steering (fake SDK), the
+                    #         mirror backend on a recorded event log (restart, rotation)
 npx tsc --noEmit
 npm run check       # all of the above + protocol doc freshness
 ```

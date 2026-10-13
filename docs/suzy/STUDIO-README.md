@@ -51,7 +51,10 @@ then pass `--archive-previous`. A running `suzy` Foreman must be stopped first
 
 The Foreman also gets `--setting-sources project` (agents load only the studio's own Claude
 settings) and `--zones suzy` (edits limited to each task's Zone). If your Foreman does not
-know those flags yet, `start` says so in a WARNING and launches without them.
+know those flags, `start` refuses before it touches the studio and names the fix (merge
+STUDIO-01 / update the fork): without `--setting-sources` the agents would load no Claude
+settings at all (no `CLAUDE.md`, no skills, no hooks), and without `--zones` no write zones are
+set. Only `--backend sim` (testing) still launches, with a WARNING that says what is missing.
 
 **Per-task CI.** After each task the Foreman runs, in the worker's worktree,
 `node tools/suzy.mjs ci --studio ~/suzy-studio --base studio/<lane>`: it links
@@ -99,3 +102,68 @@ CI job (typecheck, lint, i18n, all vitest; `npm ci` skipped, the installed modul
 and prints `git log --oneline origin/dev..HEAD` and the diffstat. That is the dry run. With
 `--apply`, from an interactive terminal only, it runs `git push origin studio/<lane>` and
 prints the PR link (`compare/dev...studio/<lane>`). It never pushes anything else.
+
+## Mirror mode: watch your own Claude Code lanes
+
+Keep working exactly as you do now: Claude web writes a brief, you paste it into a normal
+Claude Code session. Mirror mode shows every such session in the AgentCraft world as an agent:
+it walks to the library, desk, testbench and merge station, its nameplate says what it is
+doing, its task card is titled with the lane ID, its monitor shows each tool call with ok or
+error, the CI lamp follows its test runs, and it stands at the podium when Claude Code waits
+for you. It is a read-only mirror: it runs no agents, calls no API, needs no key, and never
+changes, answers or blocks a lane. Answering a permission prompt stays in Claude Code.
+
+**Install once.** From `~/agentcraft`:
+
+```sh
+node tools/suzy.mjs mirror install
+node tools/suzy.mjs mirror install --apply
+```
+
+The first command is a dry run: it prints your settings path (`~/.claude/settings.json`) and
+the exact hooks block. Read it, then run the second from your own terminal (it refuses
+anywhere else). It backs the file up to `settings.json.bak-<time>`, appends one async hook per
+event without changing or reordering any hook you already have, and does nothing if it is
+already installed. Re-run it after moving to another Node version (the hook command names
+this Node by its full path). `mirror uninstall [--apply]` removes only these entries.
+
+**Watch whenever you want.**
+
+```sh
+node tools/suzy.mjs watch
+```
+
+starts the Foreman (`--backend mirror --profile mirror`) and the game. New Claude Code sessions
+in a `khalealpatel/suzy-ai-engine` or `khalealpatel/agentcraft` checkout (any worktree of
+them) show up; sessions in any other repo are ignored. Events written while the game or the
+Foreman was off are applied on the next `watch`, without duplicates. To see an agent move
+without opening Claude Code: `node tools/suzy.mjs mirror test`.
+
+| Claude Code | In the world |
+| --- | --- |
+| session starts | the next free cast member goes on shift (workers first, Marlow last), with the session's model |
+| first prompt with `# FIRING BRIEF: <ID>` or ``Name `<ID>` `` | a task card titled with the lane ID, `doing` |
+| Read, Grep, Edit, Write, Bash... | state, station and nameplate activity; one monitor line per call (ok or error) |
+| a test command (`npm test`, `npm run check`, `vitest`...) | CI lamp `running`, then `pass` or `fail` |
+| `git push`, `gh pr create` | the merge station; feed "Pushed ..." / "PR opened from <branch>" |
+| waiting for a permission or your next prompt | at the podium, "waiting for you" (display only) |
+| the turn ends | the card goes to `review`, the agent back to the lounge |
+| session ends, or 30 min without events | off shift |
+
+More than six live sessions: the extra lanes get task cards without an avatar, and take the
+next agent that goes off shift. History is permanent: finished cards stay in the done column
+of the Task Wall, the monitor logs and feed survive restarts, and each lane gets a record in
+the library (`memory/lanes/<lane>.md`, unnamed sessions as `unnamed-<date>-<n>`): repo, branch,
+agent, start, end, duration, files touched (up to 40), test runs with pass or fail, whether a
+PR was opened, and errors.
+
+**What the hook writes.** `~/.agentcraft/mirror/events.jsonl` (file mode 600, folder 700,
+rotated at 5 MB keeping two old files), one line per event: a hash of the session id, repo,
+branch, event, tool name, the file path relative to the repo, the first 80 characters of a
+Bash command, ok or error with the exit code, and the lane ID. Never your prompt text, file
+contents, tool output or environment; an `.env*` file other than `.env.example` shows as
+`[env file]`. Tokens and keys (`sk-ant-`, `sk-`, `ghp_` and friends, `xoxb-`, `AKIA`, `Bearer`,
+`Authorization:`, `*_KEY=`, `*_TOKEN=`, `*_SECRET=`, `PASSWORD=`, URLs with credentials, long
+base64 or hex runs) become `[redacted]`. The hook prints nothing, always exits 0, never touches
+the network, and Claude Code runs it in the background (`"async": true`), so it cannot slow a
+lane.
