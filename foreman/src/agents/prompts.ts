@@ -17,14 +17,17 @@ Rules
 - Write the plan to shared memory with write_memory (title starting "Plan:"): approach, task list, risks. Keep it under 40 lines.
 - Create tasks with create_task: each small enough for one worker in one branch, with concrete acceptance criteria in the description, deps by task id, and a suggested assignee. Prefer 2-6 tasks.
 - Plan for parallel work: your workers run at the same time, each in its own branch. Split by feature (not by layer) and give each task its own new files where you can (its own module and test file). Add a dep only when a task needs code another task writes. Small additions to the same shared file (a new case in a switch, a line in the help text, an export) do NOT need a dep: if two such merges conflict, the Foreman sends the later branch back to its worker to merge the base branch and resolve it. Serialize only tasks that rewrite the same code. A worker's branch starts from the current base branch when it begins (dependencies already merged); never tell workers to fetch, pull or rebase (there is no remote).
-- Use ask_user only for product/priority decisions you cannot reasonably infer. One short question, a few options, recommended option first.
+${fm.config.claude.zones === 'suzy' ? `- Every task needs a write zone: create_task zone = the repo-relative paths or globs the worker may change (e.g. ["src/parser/", "test/parser.test.ts"]; a trailing "/" owns the whole directory, "*" matches across "/"). Keep zones of parallel tasks apart. Edits, commits and merges outside the zone are refused; widen one with update_task(zone) when the work really needs it.\n` : ''}- Use ask_user only for product/priority decisions you cannot reasonably infer. One short question, a few options, recommended option first.
 - Never push, publish or deploy. Code merges only when ${userName()} approves a merge decision.
 - Review requests: you get the diff and the test result. If the work meets the task, call request_merge(task_id, summary). Otherwise call update_task(task_id, status "doing", summary: the concrete changes needed); the worker gets your feedback.
 - Talk to workers with send_message (short). End your turn as soon as the current job is done.
 `.trim();
 }
 
-export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree): string {
+export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree, zone?: string[]): string {
+  const zoneRule = zone
+    ? `\n- Your write zone (repo-relative): ${zone.length ? zone.join(', ') : '(none set: ask Marlow for one before you change anything)'}. Change only files inside it: edits and commits outside it are refused, and so is the merge. If the task needs a file outside it, send_message Marlow to widen the zone.`
+    : '';
   return `
 # You are ${fm.nameOf(agentId)}, a worker on an AgentCraft team led by Marlow
 The user is ${userName()}. You work ONLY inside your git worktree:
@@ -38,7 +41,7 @@ How to work
 - Decide technical details yourself. Call ask_user only for something genuinely ${userName()}'s (product choice, credentials, scope).
 - Never git push, never install global tools, never change files outside your worktree. Committing is optional (the Foreman commits your work when ${userName()} approves the merge).
 - Stay on your branch in this worktree: do not check out other branches, edit .git, or point git elsewhere (GIT_DIR and friends); those need ${userName()}'s permission. Your commits are made as AgentCraft ${fm.nameOf(agentId)} and are never signed (no -S).
-- When done: update_task(task_id, status "review", summary: what changed + how you tested). If you cannot finish: update_task(status "blocked", blocked_reason). Then end your turn.
+- When done: update_task(task_id, status "review", summary: what changed + how you tested). If you cannot finish: update_task(status "blocked", blocked_reason). Then end your turn.${zoneRule}
 `.trim();
 }
 

@@ -12,6 +12,7 @@ import { isPrBranch } from '../pulls.js';
 import { truncate } from '../util/text.js';
 import { boardSummary } from './prompts.js';
 import { userName } from '../user.js';
+import { normalizeZone, outOfZone, syncTaskZone } from '../zones.js';
 
 export interface ToolHooks {
   /** worker moved its task to review */
@@ -80,6 +81,7 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
     return { content: [{ type: 'text', text: text + extra }], ...(isError ? { isError: true } : {}) };
   };
   const fail = (text: string) => withInbox(`Error: ${text}`, true);
+  const zones = fm.config.claude.zones;
 
   const tools: AgentTool[] = [
     tool(
@@ -177,7 +179,7 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
     tool(
       'update_task',
       role === 'lead'
-        ? 'Update a task: status (todo|doing|blocked|cancelled; "doing" on a review task = request changes), summary/feedback, assignee, title, description.'
+        ? 'Update a task: status (todo|doing|blocked|cancelled; "doing" on a review task = request changes), summary/feedback, assignee, title, description, zone.'
         : 'Update YOUR task: status "review" when done (with summary of changes + testing), "blocked" with blocked_reason, or "doing".',
       {
         task_id: z.string(),
@@ -187,6 +189,7 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
         assignee: z.string().optional(),
         title: z.string().optional(),
         description: z.string().optional(),
+        zone: z.array(z.string()).optional().describe('lead only: replace the task\'s write zone (repo-relative paths or globs)'),
       },
       async (a) => {
         const t = fm.tasks.get(a.task_id);
@@ -196,7 +199,7 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
           if (t.assignee !== agentId) return fail(`${t.id} is not your task`);
           if (current && t.id !== current) return fail(`you are working on ${current}; you can only update that task. Tell Marlow (send_message to "lead") if ${t.id} is already covered.`);
           if (a.status && !['review', 'blocked', 'doing'].includes(a.status)) return fail('workers can set status review, blocked or doing');
-          if (a.assignee || a.title || a.description) return fail('only the lead can change assignee/title/description');
+          if (a.assignee || a.title || a.description || a.zone) return fail('only the lead can change assignee/title/description/zone');
         }
         try {
           if (a.assignee) {
@@ -206,6 +209,10 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
           }
           if (a.title) fm.tasks.update(t.id, { title: a.title });
           if (a.description) fm.tasks.update(t.id, { description: a.description });
+          if (a.zone) {
+            fm.tasks.update(t.id, { zone: normalizeZone(a.zone) });
+            if (zones === 'suzy') syncTaskZone(fm, fm.tasks.get(t.id)!); // a running worker's hooks see it at once
+          }
           if (a.summary) fm.tasks.update(t.id, { summary: a.summary });
           if (a.status && a.status !== t.status) {
             const prev = t.status;
@@ -246,10 +253,25 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
           assignee: z.string().optional().describe('worker id/name'),
           priority: z.number().int().optional(),
           start_branch: z.string().optional().describe('only for a fetched pull request: its branch, e.g. "agentcraft/pr-12"; the worker starts from the contributor\'s commits'),
+          zone: z
+            .array(z.string())
+            .optional()
+            .describe(`repo-relative paths or globs the worker may change, e.g. ["src/parser/", "test/parser.test.ts"]${zones === 'suzy' ? ' (required)' : ''}`),
         },
-        async ({ title, description, deps, assignee, priority, start_branch }) => {
+        async ({ title, description, deps, assignee, priority, start_branch, zone }) => {
           const goal = fm.currentGoal();
           if (start_branch && !isPrBranch(start_branch)) return fail(`start_branch must be a fetched pull request branch (agentcraft/pr-<n>), not ${start_branch}`);
+          let paths: string[] | undefined;
+          if (zone?.length || zones === 'suzy') {
+            if (!zone?.length) {
+              return fail('this team runs with write zones (--zones suzy): every task needs a zone. Call create_task again with zone = the repo-relative paths or globs the worker may change, e.g. ["src/parser/", "test/parser.test.ts"]. Edits and commits outside it are refused.');
+            }
+            try {
+              paths = normalizeZone(zone);
+            } catch (e) {
+              return fail((e as Error).message);
+            }
+          }
           let who: string | undefined;
           if (assignee) {
             who = fm.resolveAgentId(assignee);
@@ -264,6 +286,7 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
               ...(who ? { assignee: who } : {}),
               ...(priority !== undefined ? { priority } : {}),
               ...(start_branch ? { startBranch: start_branch } : {}),
+              ...(paths ? { zone: paths } : {}),
               createdBy: agentId,
               ...(goal ? { goalId: goal.id } : {}),
               ...(goal?.repoId ? { repoId: goal.repoId } : {}),
@@ -292,6 +315,16 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
             return withInbox(`${t.id} changed no files, so there is nothing to merge: it is closed as done. Tell ${userName()} the result with send_message if you have not yet.`);
           }
           const wt = fm.repos.requireWorktree(t.repoId, t.worktree);
+          if (zones === 'suzy') {
+            // the Foreman commits the worker's leftovers itself (no commit hook sees that), so the
+            // zone is checked here, on everything the merge would bring in
+            if (!t.zone?.length) return fail(`${t.id} has no write zone (--zones suzy), so its changes cannot be checked: set one with update_task(zone), then request the merge again.`);
+            const diff = await fm.repos.diff(t.repoId, wt.id);
+            const outside = outOfZone(diff.files.flatMap((f) => (f.oldPath ? [f.oldPath, f.path] : [f.path])), t.zone);
+            if (outside.length) {
+              return fail(`${t.id} changes files outside its write zone (${t.zone.join(', ')}): ${outside.join(', ')}. Ask the worker to revert them (update_task status "doing"), or widen the zone with update_task(zone) if they belong to this task.`);
+            }
+          }
           const d = fm.createDecision({
             agentId,
             kind: 'merge',

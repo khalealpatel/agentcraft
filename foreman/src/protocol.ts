@@ -118,6 +118,7 @@ export const Task = z.object({
   branch: z.string().optional().describe('git branch, e.g. "agentcraft/kit/t2-tag-parser"'),
   startBranch: z.string().optional().describe('the worker\'s branch starts from this branch instead of the base, e.g. a fetched pull request "agentcraft/pr-12"'),
   worktree: Id.optional(),
+  zone: z.array(z.string()).optional().describe('repo-relative paths or globs the task may change (--zones suzy)'),
   ci: CiStatus,
   blockedReason: z.string().optional(),
   summary: z.string().optional().describe('worker/lead summary of the result'),

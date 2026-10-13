@@ -42,6 +42,7 @@ import type { Engine, EngineId, PermissionGate, Role, TurnStats } from './engine
 import { agentTools, type ToolHooks, type TurnHandle } from './tools.js';
 import { modelLabel } from './models.js';
 import { userName } from '../user.js';
+import { syncTaskZone, ZONE_ENV, zoneFile } from '../zones.js';
 
 // policy: our own team tools are trusted (the Claude engine exposes them as this MCP server)
 const TEAM_MCP_SERVER = 'agentcraft';
@@ -595,6 +596,12 @@ export class TeamBackend implements Backend {
 
   private async startWork(agentId: string, t: Task, goal: Goal): Promise<void> {
     if (!t.repoId) t.repoId = goal.repoId;
+    if (this.cfg.zones === 'suzy' && !t.zone?.length) {
+      // e.g. created before --zones suzy was turned on: never run a worker without its zone
+      this.fm.tasks.setStatus(t.id, 'blocked', { force: true, reason: 'no write zone (--zones suzy): Marlow sets one with update_task(zone), then moves the task back to todo' });
+      this.fm.bus.feed('task', `${t.id} has no write zone: blocked until Marlow sets one`, { agentId: LEAD });
+      return;
+    }
     this.fm.tasks.update(t.id, { assignee: agentId });
     // a task another worker started (stopped / reassigned): continue from that worker's branch,
     // whether or not its worktree was already wound down (abandoned)
@@ -617,6 +624,11 @@ export class TeamBackend implements Backend {
     if (!startPoint && t.startBranch) startPoint = t.startBranch;
     const wt = await this.fm.repos.createWorktree(t.repoId!, agentId, t, startPoint ? { startPoint } : {});
     this.fm.tasks.update(t.id, { branch: wt.branch, worktree: wt.id });
+    if (this.cfg.zones === 'suzy') {
+      // the zone moves with the task: the new worktree gets it, the handed-off one loses it
+      if (prev && prev.id !== wt.id) fs.rmSync(zoneFile(this.fm.config.dataDir, t.repoId!, prev.id), { force: true });
+      syncTaskZone(this.fm, this.fm.tasks.require(t.id));
+    }
     this.fm.tasks.setStatus(t.id, 'doing');
     this.fm.setAgent(agentId, { taskId: t.id, repoId: t.repoId!, worktree: wt.id, state: 'thinking', station: 'desk', activity: `starting ${t.id}` });
     this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId });
@@ -778,10 +790,19 @@ export class TeamBackend implements Backend {
       this.fm.store.markDirty();
 
       let systemAppend: string;
+      const env = agentEnv(process.env, { agentId, cwd });
       if (role === 'lead') systemAppend = leadSystemPrompt(this.fm, this.team);
       else {
         const t = this.fm.tasks.require(job.taskId!);
-        systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!));
+        const wt = this.fm.repos.requireWorktree(t.repoId!, t.worktree!);
+        systemAppend = workerSystemPrompt(this.fm, agentId, wt, this.cfg.zones === 'suzy' ? t.zone : undefined);
+        if (this.cfg.zones === 'suzy') {
+          // rewritten every turn (renews Suzy's 24h expiry); the hooks read it through the env.
+          // Set even if the file is missing, so Suzy treats the worker as undeclared (commits
+          // refused) instead of finding some other lane's zone.
+          syncTaskZone(this.fm, t, resume);
+          env[ZONE_ENV] = zoneFile(this.fm.config.dataDir, t.repoId!, wt.id);
+        }
       }
       const model = engine.model(role);
       this.fm.agentLog(agentId, 'text', `${resume ? 'Resuming' : 'Starting'} ${job.kind}${job.taskId ? ` ${job.taskId}` : ''} (${engine.id === 'claude' ? model : `${engine.label} ${model}`})`);
@@ -799,7 +820,7 @@ export class TeamBackend implements Backend {
           prompt,
           instructions: systemAppend,
           ...(resume ? { resume } : {}),
-          env: agentEnv(process.env, { agentId, cwd }),
+          env,
           writableRoots: await this.writableRoots(role, job),
           abort,
           turn,

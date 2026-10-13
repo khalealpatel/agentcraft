@@ -25,6 +25,8 @@ export interface CreateTaskInput {
   priority?: number;
   /** the worker's branch starts from this branch (e.g. a fetched pull request) instead of the base */
   startBranch?: string;
+  /** repo-relative paths or globs the task may change (--zones suzy) */
+  zone?: string[];
   createdBy: string;
 }
 
@@ -40,6 +42,7 @@ export interface TaskPatch {
   summary?: string;
   blockedReason?: string | null;
   repoId?: string;
+  zone?: string[];
 }
 
 const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
@@ -98,6 +101,7 @@ export class TaskGraph {
     if (input.repoId) task.repoId = input.repoId;
     if (input.goalId) task.goalId = input.goalId;
     if (input.startBranch) task.startBranch = input.startBranch;
+    if (input.zone?.length) task.zone = [...input.zone];
     this.tasks.push(task);
     this.touch(task);
     return task;
@@ -117,6 +121,7 @@ export class TaskGraph {
     }
     if (patch.title !== undefined) t.title = patch.title;
     if (patch.description !== undefined) t.description = patch.description;
+    if (patch.zone !== undefined) t.zone = [...patch.zone];
     if (patch.assignee !== undefined) {
       if (patch.assignee === null) delete t.assignee;
       else t.assignee = patch.assignee;
