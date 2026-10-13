@@ -2,14 +2,17 @@
 // Suzy studio launcher: start a Suzy lane on ~/suzy-studio with the AgentCraft team, then ship
 // its branch into the normal PR flow. Pure parts live in lib/suzy.mjs.
 import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { javaHome } from './lib/java.mjs';
+import { applyRefusal as mirrorApplyRefusal, claudeSettingsFile, hookCommand, hooksBlock, installHooks, restoreBytes, uninstallHooks } from './lib/mirror-settings.mjs';
+import { appendEvent, mirrorDir } from './mirror/lib.mjs';
 import {
   BASE, LANE_FILE, PROFILE, STUDIO_FLAGS, applyRefusal, briefNote, changedPaths, ciCommand, fastCiSteps, findEnvFiles,
-  fullCiSteps, goalText, laneName, launchArgs, maxWarnings, originMatches, parseJob, parseProbe, prUrl, renderReport, testCounts,
+  fullCiSteps, goalText, laneName, launchArgs, maxWarnings, originMatches, parseJob, parseProbe, prUrl, renderReport, studioFlagGap, testCounts,
 } from './lib/suzy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,13 +31,19 @@ function usage(code = 0) {
   node tools/suzy.mjs ship <LANE> [--apply]
   node tools/suzy.mjs ci --base <branch>          (the per-task CI the Foreman runs in a worktree)
 
+Mirror mode (watch your own Claude Code sessions in the world; no agents, no API, no key):
+  node tools/suzy.mjs mirror install [--apply]    add the hook to ~/.claude/settings.json (dry run first)
+  node tools/suzy.mjs mirror uninstall [--apply]  remove only the mirror hook's entries
+  node tools/suzy.mjs mirror test [--fast]        append a synthetic session so you see an agent move
+  node tools/suzy.mjs watch [--no-game]           the Foreman (--backend mirror --profile mirror) plus the game
+
 Common: --studio PATH (default ~/suzy-studio, env SUZY_STUDIO), --home PATH (default ~/.agentcraft,
 env AGENTCRAFT_HOME), --port N (Foreman, default 7878). Testing only: --backend sim, --no-game.`);
   process.exit(code);
 }
 
 const VALUES = new Set(['brief', 'lead-model', 'worker-model', 'workers', 'max-budget', 'studio', 'home', 'port', 'base', 'backend', 'profile', 'out']);
-const SWITCHES = new Set(['resume', 'archive-previous', 'dry-run', 'no-launch', 'no-game', 'apply', 'game', 'foreman', 'help']);
+const SWITCHES = new Set(['resume', 'archive-previous', 'dry-run', 'no-launch', 'no-game', 'apply', 'game', 'foreman', 'help', 'fast']);
 
 export function options(argv) {
   const out = { action: argv[0], positional: [] };
@@ -151,6 +160,12 @@ function start(opt) {
   doctor(opt, { quiet: true });
   const studio = opt.studio;
 
+  // before any change to the studio: a real lane without STUDIO-01's flags runs weaker than allowed
+  const probe = foremanFlagSupport();
+  const gap = studioFlagGap(opt.backend, probe.unknown);
+  if (gap.refusal) refuse(gap.refusal);
+  for (const w of gap.warnings) console.warn(w);
+
   // one Foreman per profile; a running one would ignore the new goal, models and CI command
   const dataDir = path.join(opt.home, PROFILE);
   const owner = readJson(path.join(dataDir, 'foreman.json'));
@@ -198,11 +213,6 @@ function start(opt) {
     fs.writeFileSync(path.join(dataDir, LANE_FILE), JSON.stringify({ lane, branch, studio, brief: briefFile, startedAt: new Date().toISOString() }, null, 2) + '\n');
   }
 
-  const probe = foremanFlagSupport();
-  if (probe.unknown.length) {
-    console.warn(`WARNING: this Foreman does not know ${probe.unknown.map((f) => `--${f}`).join(' and ')} yet (STUDIO-01 not merged).`);
-    console.warn('  Launching without them: agents load your user-level Claude settings and no zone limits are enforced.');
-  }
   const ci = ciCommand({ root, studio, branch });
   const args = launchArgs({
     backend: opt.backend, studio, home: opt.home, port: opt.port, noGame: opt['no-game'],
@@ -373,7 +383,121 @@ function stop(opt) {
   return run(process.execPath, [path.join(tools, 'unix.mjs'), ...args], { cwd: root, allowFail: true, inherit: true }).code ?? 1;
 }
 
-const ACTIONS = { doctor: (o) => (doctor(o), 0), start, ci, ship, report, status, stop };
+// ---------------------------------------------------------------------------------------------
+// mirror mode: watch, mirror install | uninstall | test
+// ---------------------------------------------------------------------------------------------
+
+const MIRROR_PROFILE = 'mirror';
+const HOOK = path.join(tools, 'mirror', 'hook.mjs');
+
+function watch(opt) {
+  const args = ['launch', '--backend', 'mirror', '--profile', MIRROR_PROFILE, '--home', opt.home,
+    ...(opt.port ? ['--port', String(opt.port)] : []), ...(opt['no-game'] ? ['--no-game'] : [])];
+  console.log(`watch: node ${path.join(tools, 'unix.mjs')} ${args.join(' ')}`);
+  return run(process.execPath, [path.join(tools, 'unix.mjs'), ...args], { cwd: root, allowFail: true, inherit: true }).code ?? 1;
+}
+
+function writeSettings(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, text, { mode: fs.existsSync(file) ? fs.statSync(file).mode & 0o777 : 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+function backupSettings(file) {
+  if (!fs.existsSync(file)) return undefined;
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+  let bak = `${file}.bak-${stamp}`;
+  for (let i = 2; fs.existsSync(bak); i++) bak = `${file}.bak-${stamp}-${i}`;
+  fs.copyFileSync(file, bak);
+  return bak;
+}
+
+const backupsOf = (file) => {
+  const dir = path.dirname(file);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter((n) => n.startsWith(`${path.basename(file)}.bak-`)).sort().reverse().map((n) => fs.readFileSync(path.join(dir, n), 'utf8'));
+};
+
+function mirrorInstall(opt, remove) {
+  if (opt.apply) {
+    const why = mirrorApplyRefusal(Boolean(process.stdin.isTTY && process.stdout.isTTY));
+    if (why) refuse(why);
+  }
+  const file = claudeSettingsFile();
+  const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined;
+  const command = hookCommand(process.execPath, HOOK);
+  let res;
+  try {
+    res = remove ? uninstallHooks(before) : installHooks(before, command);
+  } catch (e) {
+    refuse(`${file}: ${e.message}`);
+  }
+  console.log(`Claude Code user settings: ${file}${before === undefined ? ' (does not exist yet)' : ''}`);
+  if (!remove) {
+    console.log(`\nThe hooks block this merges in (existing hooks are kept, in order; ours is appended per event):\n`);
+    console.log(JSON.stringify(hooksBlock(command), null, 2));
+    console.log(`\nThe hook is async (it never blocks a lane), writes only to ${mirrorDir({ ...process.env, AGENTCRAFT_HOME: opt.home })}, and only for khalealpatel/suzy-ai-engine and khalealpatel/agentcraft checkouts.`);
+  }
+  if (!res.changed) {
+    console.log(remove ? '\nNo mirror hook entries found: nothing to remove.' : '\nAlready installed: nothing to change.');
+    return 0;
+  }
+  const what = remove ? `remove ${res.removed} mirror hook entr${res.removed === 1 ? 'y' : 'ies'}` : `add ${res.added} and update ${res.updated} mirror hook entr${res.added + res.updated === 1 ? 'y' : 'ies'}`;
+  if (!opt.apply) {
+    console.log(`\nDry run: this would ${what}. Nothing was written. To apply: node tools/suzy.mjs mirror ${remove ? 'uninstall' : 'install'} --apply`);
+    return 0;
+  }
+  const bak = backupSettings(file);
+  const text = remove ? restoreBytes(res.text, backupsOf(file)) : res.text;
+  writeSettings(file, text);
+  console.log(`\nDone: ${what.replace(/^add/, 'added').replace(/^remove/, 'removed').replace(' and update ', ', updated ')}.${bak ? ` Backup: ${bak}` : ''}`);
+  if (!remove) console.log('New Claude Code sessions pick it up. Watch them with: node tools/suzy.mjs watch');
+  return 0;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A synthetic session (start, read, edit, test pass, stop), as the hook would have written it. */
+export function syntheticSession(sid, t0 = Date.now()) {
+  const base = { v: 1, sid, repo: 'agentcraft', branch: 'mirror-test' };
+  const steps = [
+    { event: 'SessionStart', model: 'claude-opus-5-5', source: 'startup' },
+    { event: 'UserPromptSubmit', first: true, lane: 'MIRROR-TEST' },
+    { event: 'PreToolUse', tool: 'Read', file: 'tools/README.md' },
+    { event: 'PostToolUse', tool: 'Read', file: 'tools/README.md', ok: true },
+    { event: 'PreToolUse', tool: 'Edit', file: 'docs/suzy/STUDIO-README.md' },
+    { event: 'PostToolUse', tool: 'Edit', file: 'docs/suzy/STUDIO-README.md', ok: true },
+    { event: 'PreToolUse', tool: 'Bash', cmd: 'npm test' },
+    { event: 'PostToolUse', tool: 'Bash', cmd: 'npm test', ok: true },
+    { event: 'Stop' },
+  ];
+  return steps.map((s, i) => ({ ...base, ts: t0 + i, ...s }));
+}
+
+async function mirrorTest(opt) {
+  const dir = mirrorDir({ ...process.env, AGENTCRAFT_HOME: opt.home });
+  const sid = crypto.randomBytes(8).toString('hex');
+  const events = syntheticSession(sid);
+  console.log(`mirror test: a synthetic session (lane MIRROR-TEST, agentcraft @ mirror-test) into ${path.join(dir, 'events.jsonl')}`);
+  for (const [i, e] of events.entries()) {
+    if (i && !opt.fast) await sleep(1500);
+    appendEvent(dir, { ...e, ts: Date.now() });
+    console.log(`  ${e.event}${e.tool ? ` ${e.tool}` : ''}${e.file ? ` ${e.file}` : ''}${e.cmd ? ` $ ${e.cmd}` : ''}`);
+  }
+  console.log('Done. With `node tools/suzy.mjs watch` running, an agent ran through it; its task card MIRROR-TEST is in review.');
+  return 0;
+}
+
+function mirror(opt) {
+  const sub = opt.positional[0];
+  if (sub === 'install') return mirrorInstall(opt, false);
+  if (sub === 'uninstall') return mirrorInstall(opt, true);
+  if (sub === 'test') return mirrorTest(opt);
+  refuse('usage: node tools/suzy.mjs mirror install|uninstall [--apply] | mirror test [--fast]');
+}
+
+const ACTIONS = { doctor: (o) => (doctor(o), 0), start, ci, ship, report, status, stop, watch, mirror };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

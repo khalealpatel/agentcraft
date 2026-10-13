@@ -22,7 +22,7 @@ const runFile = (kind, profile) => path.join(runDir, `unix-${kind}-${profile}.js
 
 function usage(code = 0) {
   console.log(`AgentCraft launcher (macOS, Linux)
-  node tools/unix.mjs launch [--backend sim|claude|codex] [--repo PATH] [--use-claude-login]
+  node tools/unix.mjs launch [--backend sim|claude|codex|mirror] [--repo PATH] [--use-claude-login]
                             [--home PATH] [--profile NAME] [--port N] [--dev-port N]
                             [--dev] [--showcase busy|late] [--reset]
                             [--no-game] [--no-foreman] [--no-wait]
@@ -58,7 +58,7 @@ function options(argv) {
     out.backend = 'sim';
     out.profile ??= out.showcase === 'late' ? 'showcase-late' : 'showcase';
   }
-  if (!['sim', 'claude', 'codex'].includes(out.backend)) throw new Error('backend must be sim, claude or codex');
+  if (!['sim', 'claude', 'codex', 'mirror'].includes(out.backend)) throw new Error('backend must be sim, claude, codex or mirror');
   out.profile ??= out.backend;
   if (!/^[\w-]+$/.test(out.profile)) throw new Error('profile must contain only letters, digits, _ or -');
   out.home = path.resolve(out.home ?? process.env.AGENTCRAFT_HOME ?? path.join(os.homedir(), '.agentcraft'));
