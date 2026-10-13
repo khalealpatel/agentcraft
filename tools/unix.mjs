@@ -6,6 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JDK_CANDIDATES, javaHome } from './lib/java.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tools = path.join(root, 'tools');
@@ -95,26 +96,6 @@ async function waitPort(port, timeoutMs, info, name) {
     await sleep(500);
   }
   throw new Error(`${name} did not start in time; see ${info?.log ?? 'its logs'}`);
-}
-
-const JDK_CANDIDATES = {
-  darwin: ['/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home', '/usr/local/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home'],
-  linux: ['/usr/lib/jvm/java-25-openjdk', '/usr/lib/jvm/java-25-openjdk-amd64', '/usr/lib/jvm/java-25-openjdk-arm64'],
-};
-const JDK_HINT = {
-  darwin: 'brew install openjdk@25',
-  linux: 'your distribution\'s package manager (Arch: pacman -S jdk25-openjdk), or set JAVA_HOME to a Java 25 JDK',
-};
-
-function javaHome() {
-  for (const candidate of [process.env.JAVA_HOME, ...JDK_CANDIDATES[process.platform]]) {
-    if (!candidate) continue;
-    const java = path.join(candidate, 'bin', 'java');
-    if (!fs.existsSync(java)) continue;
-    const result = spawnSync(java, ['-version'], { encoding: 'utf8' });
-    if (/version "25[.\"]/.test(result.stderr + result.stdout)) return candidate;
-  }
-  throw new Error(`Java 25 is required. Install it with ${JDK_HINT[process.platform]}`);
 }
 
 function installDeps(dir) {

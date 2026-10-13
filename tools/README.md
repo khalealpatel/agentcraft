@@ -23,6 +23,31 @@ recorded by this launcher. Agent decisions show a desktop notification (Notifica
 macOS, `notify-send` on Linux). The screenshot QA command, `node tools/qa.mjs`, also uses this
 launcher on macOS and Linux.
 
+### Suzy studio (`suzy.mjs`)
+
+One command to start a Suzy lane on `~/suzy-studio` and one to ship its branch into the PR
+flow. Founder flow and options: [docs/suzy/STUDIO-README.md](../docs/suzy/STUDIO-README.md);
+brief template: [docs/suzy/STUDIO-BRIEF-TEMPLATE.md](../docs/suzy/STUDIO-BRIEF-TEMPLATE.md).
+
+```sh
+node tools/suzy.mjs doctor                                  # Node, Java 25, studio origin, no keys
+node tools/suzy.mjs start STUDIO-07 --brief brief.md --dry-run
+node tools/suzy.mjs start STUDIO-07 --brief brief.md        # branch studio/studio-07, brief, launch
+node tools/suzy.mjs status                                  # lane + foremancli status
+node tools/suzy.mjs report STUDIO-07                        # artifacts/reports/STUDIO-07.md
+node tools/suzy.mjs stop                                    # unix.mjs stop --profile suzy
+node tools/suzy.mjs ship STUDIO-07                          # full frontend CI, log, diffstat (dry run)
+node tools/suzy.mjs ship STUDIO-07 --apply                  # interactive terminal only: push + PR link
+```
+
+`start` launches through `unix.mjs` (profile `suzy`, `--use-claude-login`) and passes
+`--setting-sources project` and `--zones suzy` to the Foreman when it knows them (a WARNING
+otherwise). The Foreman's per-task CI is `suzy.mjs ci`, which links `frontend/node_modules`
+from the studio into the worker's worktree and runs typecheck, lint at the repo's warning cap
+and `vitest related` on the changed files. Refusals exit 2, errors exit 1. `--studio`, `--home`
+and `--port` point it at a throwaway copy for testing; `--backend sim` and `--no-game` are for
+tests only.
+
 ### Your own launcher instance (Prism, MultiMC, ...)
 
 The mod also runs in a normal Fabric instance for Minecraft 26.3 with Fabric Loader 0.19.5+:
@@ -121,4 +146,6 @@ Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.
 | `shoot.mjs`, `lib/scene.mjs` | scene runner (anchors, screens, Foreman messages, waits) |
 | `record.mjs`, `shots/*.json` | real-time shot player for screen recording (`dev.play`: camera paths, timed Foreman injections, typing); format in `shots/README.md` |
 | `qa.mjs`, `lib/contactsheet.mjs`, `scenes/qa.json` | QA suite, contact sheet (pngjs) |
+| `unix.mjs`, `lib/java.mjs` | macOS/Linux launcher; Java 25 lookup shared with `suzy.mjs` |
+| `suzy.mjs`, `lib/suzy.mjs` | Suzy studio launcher: doctor, start, ci, status, stop, report, ship |
 | `scenes/phase1.json`, `scenes/qa-selftest.json` | Phase 1 proof scene, runner self-test |
