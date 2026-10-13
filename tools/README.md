@@ -41,12 +41,28 @@ node tools/suzy.mjs ship STUDIO-07 --apply                  # interactive termin
 ```
 
 `start` launches through `unix.mjs` (profile `suzy`, `--use-claude-login`) and passes
-`--setting-sources project` and `--zones suzy` to the Foreman when it knows them (a WARNING
-otherwise). The Foreman's per-task CI is `suzy.mjs ci`, which links `frontend/node_modules`
+`--setting-sources project` and `--zones suzy` to the Foreman. A Foreman without either flag is
+refused (only `--backend sim` launches anyway, with a WARNING). The Foreman's per-task CI is `suzy.mjs ci`, which links `frontend/node_modules`
 from the studio into the worker's worktree and runs typecheck, lint at the repo's warning cap
 and `vitest related` on the changed files. Refusals exit 2, errors exit 1. `--studio`, `--home`
 and `--port` point it at a throwaway copy for testing; `--backend sim` and `--no-game` are for
 tests only.
+
+**Mirror mode** shows your own Claude Code sessions (Suzy and AgentCraft checkouts) in the
+world, read only. Details: the "Mirror mode" section of
+[docs/suzy/STUDIO-README.md](../docs/suzy/STUDIO-README.md).
+
+```sh
+node tools/suzy.mjs mirror install            # dry run: the exact hooks block for ~/.claude/settings.json
+node tools/suzy.mjs mirror install --apply    # interactive terminal only: backup, merge, idempotent
+node tools/suzy.mjs mirror uninstall [--apply]  # only the mirror entries; the original comes back
+node tools/suzy.mjs watch [--no-game]         # Foreman --backend mirror --profile mirror + the game
+node tools/suzy.mjs mirror test [--fast]      # a synthetic session: watch an agent move
+```
+
+The hook is `tools/mirror/hook.mjs` (pure logic in `tools/mirror/lib.mjs`): async, silent,
+always exit 0, no network, no child processes; it appends allowlisted, scrubbed lines to
+`~/.agentcraft/mirror/events.jsonl`. `unix.mjs launch --backend mirror` works too.
 
 ### Your own launcher instance (Prism, MultiMC, ...)
 

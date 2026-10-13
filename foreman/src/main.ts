@@ -1,7 +1,8 @@
-// Foreman entry point: `npm run start -- --backend sim|claude|codex [--repo <path>] [--speed N] ...`
+// Foreman entry point: `npm run start -- --backend sim|claude|codex|mirror [--repo <path>] [--speed N] ...`
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { MirrorBackend } from './agents/mirror/index.js';
 import { createTeam } from './agents/teams.js';
 import { SimBackend } from './agents/sim/index.js';
 import { DEFAULT_SIM_GOAL } from './agents/sim/scenario.js';
@@ -11,6 +12,7 @@ import { Foreman } from './foreman.js';
 import { ForemanServer } from './server.js';
 import { claimRunFiles, homeRunFile, liveOwner, profileRunFile, releaseRunFiles } from './runfile.js';
 import { isInsideOrEqual } from './util/fsx.js';
+import { EVENTS_FILE, SCOPE_CACHE_FILE, SESSIONS_DIR } from '../../tools/mirror/lib.mjs';
 
 async function createDemoRepo(cfg: Config, dir: string): Promise<void> {
   const mod = (await import(pathToFileURL(path.join(cfg.projectRoot, 'sandbox', 'create-demo.mjs')).href)) as {
@@ -23,6 +25,14 @@ function wipeProfile(cfg: Config): void {
   // only ever delete inside the configured home
   if (!isInsideOrEqual(cfg.dataDir, cfg.home) || path.resolve(cfg.dataDir) === path.resolve(cfg.home)) {
     throw new Error(`refusing to wipe ${cfg.dataDir}`);
+  }
+  // the mirror hook writes its event log into the same directory: --reset rebuilds the world from it
+  const keep = path.resolve(cfg.dataDir) === path.resolve(cfg.mirror.dir) ? (n: string) => n.startsWith(EVENTS_FILE) || n === SCOPE_CACHE_FILE || n === SESSIONS_DIR : undefined;
+  if (keep) {
+    for (const n of fs.existsSync(cfg.dataDir) ? fs.readdirSync(cfg.dataDir) : []) {
+      if (!keep(n)) fs.rmSync(path.join(cfg.dataDir, n), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+    return;
   }
   fs.rmSync(cfg.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
@@ -61,7 +71,7 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   const foreman = new Foreman({ config: cfg, logger: log });
-  const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : createTeam(foreman, cfg);
+  const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : cfg.backend === 'mirror' ? new MirrorBackend(foreman, cfg.mirror) : createTeam(foreman, cfg);
   const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, log });
 
   try {

@@ -61,7 +61,9 @@ export type NotifyLevel = z.infer<typeof NotifyLevel>;
 export const WorktreeStatus = z.enum(['active', 'merged', 'abandoned']);
 export type WorktreeStatus = z.infer<typeof WorktreeStatus>;
 
-export const BackendName = z.enum(['sim', 'claude', 'codex']);
+export const BackendName = z
+  .enum(['sim', 'claude', 'codex', 'mirror'])
+  .describe('`mirror` = a read-only view of your own Claude Code sessions (the mirror hook); it runs no agents.');
 export type BackendName = z.infer<typeof BackendName>;
 
 export const AuthStatus = z
@@ -183,8 +185,8 @@ export const Repo = z.object({
 export type Repo = z.infer<typeof Repo>;
 
 export const MemoryEntry = z.object({
-  id: Id.describe('"shared/<slug>" or "<agentId>/<slug>"'),
-  scope: z.string().describe('"shared" or an agent id'),
+  id: Id.describe('"shared/<slug>", "<agentId>/<slug>" or "lanes/<slug>"'),
+  scope: z.string().describe('"shared", an agent id, or "lanes" (lane records from the mirror backend)'),
   title: z.string(),
   body: z.string().describe('markdown'),
   updated: Ts,

@@ -169,6 +169,29 @@ export function parseProbe(output, flags = STUDIO_FLAGS) {
   return { supported: flags.filter((f) => !named.includes(f)), unknown: named };
 }
 
+const FLAG_GAPS = {
+  'setting-sources': '--setting-sources: agents would load no Claude Code settings at all (no CLAUDE.md, no skills, no hooks), because upstream runs them with settingSources: []',
+  zones: '--zones: no per-task write zones would be set, so a merge outside its task\'s zone would not be refused',
+};
+
+/**
+ * What `start` does when this Foreman lacks studio flags (parseProbe's `unknown`): any real backend
+ * refuses and names the fix; the sim backend (testing only) launches with a warning.
+ */
+export function studioFlagGap(backend, unknown) {
+  if (!unknown.length) return { refusal: undefined, warnings: [] };
+  const flags = unknown.map((f) => `--${f}`).join(' and ');
+  const missing = unknown.map((f) => `  - ${FLAG_GAPS[f] ?? `--${f}`}`);
+  if (backend !== 'sim') {
+    return {
+      refusal: [`this Foreman does not support ${flags}, so a ${backend} lane would run weaker than the studio allows:`, ...missing,
+        'Fix: merge STUDIO-01 / update the fork (git -C <agentcraft> pull on the suzy branch), then re-run.'].join('\n'),
+      warnings: [],
+    };
+  }
+  return { refusal: undefined, warnings: [`WARNING: this Foreman does not support ${flags} (STUDIO-01 not merged). Launching the sim anyway:`, ...missing] };
+}
+
 /** unix.mjs launch arguments for a lane. */
 export function launchArgs(o) {
   // STUDIO-01's Foreman flags, only when this Foreman knows them (see foremanFlagSupport in suzy.mjs)

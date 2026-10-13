@@ -84,6 +84,16 @@ export interface SimConfig {
   ambient: boolean;
 }
 
+/** Mirror backend: shows your own Claude Code sessions from the mirror hook's event log. */
+export interface MirrorConfig {
+  /** where tools/mirror/hook.mjs writes events.jsonl: <home>/mirror */
+  dir: string;
+  /** how often the event log is checked for new lines (ms) */
+  pollMs: number;
+  /** a session with no events for this long goes off shift (ms) */
+  idleMs: number;
+}
+
 export interface Config {
   backend: BackendName;
   /** the person the team works for (prompts, feed, UI); default: the OS user name */
@@ -116,6 +126,7 @@ export interface Config {
   codex: CodexConfig;
   engines: EngineChoice;
   sim: SimConfig;
+  mirror: MirrorConfig;
 }
 
 type Flags = Record<string, string | boolean>;
@@ -279,7 +290,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const pick = (k: string, envKey?: string): unknown => flags[k] ?? (envKey ? env[envKey] : undefined) ?? file[k];
 
   const backendRaw = String(pick('backend', 'AGENTCRAFT_BACKEND') ?? 'claude');
-  if (backendRaw !== 'sim' && backendRaw !== 'claude' && backendRaw !== 'codex') throw new Error(`unknown backend "${backendRaw}" (use sim, claude or codex)`);
+  if (!['sim', 'claude', 'codex', 'mirror'].includes(backendRaw)) throw new Error(`unknown backend "${backendRaw}" (use sim, claude or codex, or mirror to watch your own Claude Code sessions)`);
   const backend = backendRaw as BackendName;
   const profile = str(pick('profile', 'AGENTCRAFT_PROFILE')) ?? backend;
   if (!/^[a-zA-Z0-9_-]+$/.test(profile)) throw new Error(`bad profile name "${profile}"`);
@@ -359,6 +370,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       autoAnswer: bool(flags['auto-answer'] ?? fileSim.autoAnswer, false),
       ambient: bool(flags.ambient ?? fileSim.ambient, true),
     },
+    mirror: { dir: path.join(home, 'mirror'), pollMs: 500, idleMs: 30 * 60_000 },
   };
   if (cfg.sim.showcase) cfg.autostart = true;
   return cfg;
@@ -368,7 +380,9 @@ export const HELP = `AgentCraft Foreman ${FOREMAN_VERSION}
 
 usage: npm run start -- [options]
 
-  --backend sim|claude|codex  agent backend (default: claude; codex = an all-Codex team)
+  --backend sim|claude|codex|mirror
+                           agent backend (default: claude; codex = an all-Codex team; mirror = a
+                           read-only view of your own Claude Code sessions, see "mirror backend")
   --repo <path>[,<path>]   register local git repo(s) at start (sim: defaults to a fresh sandbox/sim-demo)
   --goal "<text>"          submit a goal right away
   --port <n>               WebSocket port (default 7878, env AGENTCRAFT_PORT)
@@ -431,4 +445,10 @@ usage: npm run start -- [options]
   --codex-effort <e>       reasoning effort (low|medium|high|xhigh...; default: your Codex config's)
   Codex agents get none of your own MCP servers, plugins, web search or apps; every command and
   out-of-worktree edit goes through the same policy and in-game permission prompts.
+
+ mirror backend (--backend mirror --profile mirror)
+  Shows the Claude Code sessions you run yourself in Suzy and AgentCraft checkouts, from the
+  events tools/mirror/hook.mjs writes to <home>/mirror/events.jsonl (install it once with
+  \`node tools/suzy.mjs mirror install\`). Read only: it runs no agents, calls no API and never
+  touches a repo. History (tasks, feed, monitor logs, lane notes) stays in the profile.
 `;
