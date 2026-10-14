@@ -60,9 +60,21 @@ node tools/suzy.mjs watch [--no-game]         # Foreman --backend mirror --profi
 node tools/suzy.mjs mirror test [--fast]      # a synthetic session: watch an agent move
 ```
 
+Per-lane numbers (where the time went, above all how long each lane waited on you), from the same
+events: wall, active, waited on you (stops, longest), idle, tool calls, files, tests, PR. Read only,
+local, no network; it writes only `~/.agentcraft/mirror/lanes.json` (a cache, mode 600). Definitions
+and examples: the "Numbers" section of [docs/suzy/STUDIO-README.md](../docs/suzy/STUDIO-README.md).
+
+```sh
+node tools/suzy.mjs stats                              # table of lanes since 7 days ago
+node tools/suzy.mjs stats --since 2026-10-01 --json    # machine output
+node tools/suzy.mjs stats --lane VOICE-PROMPT-02 --md  # one lane as a block for a PR body
+```
+
 The hook is `tools/mirror/hook.mjs` (pure logic in `tools/mirror/lib.mjs`): async, silent,
 always exit 0, no network, no child processes; it appends allowlisted, scrubbed lines to
-`~/.agentcraft/mirror/events.jsonl`. `unix.mjs launch --backend mirror` works too.
+`~/.agentcraft/mirror/events.jsonl`. `unix.mjs launch --backend mirror` works too. The numbers are
+`tools/mirror/stats.mjs` (pure functions, tests in `tools/test/mirror-stats*.test.mjs`).
 
 ### Your own launcher instance (Prism, MultiMC, ...)
 

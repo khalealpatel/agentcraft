@@ -2,6 +2,7 @@
 // Archive. Built only from the hook's allowlisted fields (no prompt text, file contents or output),
 // scrubbed once more on the way out.
 import { scrub } from '../../../../tools/mirror/lib.mjs';
+import type { SessionStats } from '../../../../tools/mirror/stats.mjs';
 
 export const MAX_FILES = 40;
 export const MAX_ERRORS = 20;
@@ -39,6 +40,12 @@ export interface LaneSession {
   pushed?: string;
   pr?: string;
   errors: string[];
+  /** the session's numbers (tools/mirror/stats.mjs), folded in as events arrive */
+  stats?: SessionStats;
+  /** when the current wait on the founder began (a Notification not yet followed by another event) */
+  waitingSince?: number;
+  /** when the nameplate last showed the wait's duration */
+  waitShownAt?: number;
 }
 
 const iso = (ts: number) => new Date(ts).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -75,8 +82,11 @@ function sessionBlock(s: LaneSession, n: number, total: number): string[] {
   return out;
 }
 
-/** The note for one lane: every session that carried its lane ID (or the one unnamed session). */
-export function renderLaneNote(title: string, sessions: LaneSession[]): string {
+/**
+ * The note for one lane: every session that carried its lane ID (or the one unnamed session).
+ * `numbers` is the lane's "## Numbers" section (tools/mirror/stats.mjs), shown before the sessions.
+ */
+export function renderLaneNote(title: string, sessions: LaneSession[], numbers?: string): string {
   const ordered = [...sessions].sort((a, b) => a.startedAt - b.startedAt);
   const lines = [
     `# ${title}`,
@@ -86,6 +96,7 @@ export function renderLaneNote(title: string, sessions: LaneSession[]): string {
     `- Lane: ${ordered[0]?.lane ?? 'none (no FIRING BRIEF or Name line in the first prompt)'}`,
     `- Sessions: ${ordered.length}`,
     '',
+    ...(numbers ? [numbers, ''] : []),
     ...ordered.flatMap((s, i) => [...sessionBlock(s, i + 1, ordered.length), '']),
   ];
   return scrub(lines.join('\n').trimEnd());

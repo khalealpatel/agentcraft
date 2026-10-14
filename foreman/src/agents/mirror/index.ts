@@ -11,8 +11,10 @@
 //   PostToolUse(Failure) one monitor line: the label plus ok or error
 //   test command        task CI `running`, then `pass` or `fail`
 //   git push / gh pr    the merge station; feed "Pushed" / "PR opened" with the branch
-//   Notification        `waiting_user` at the user station plus a feed line (display only)
-//   Stop                task `review`, agent back to the lounge, lane note written
+//   Notification        `waiting_user` at the user station plus a feed line (display only); the
+//                       nameplate then counts "waiting on you 12m" (refreshed once a minute)
+//   Stop                task `review`, agent back to the lounge, lane note written (with its
+//                       Numbers), feed "<lane> finished: 2h10m, waited on you 23m across 4 stops, tests 6/6"
 //   SessionEnd / idle   off shift
 //
 // It never runs agents, commands or git, never calls an API, and writes only through the Foreman
@@ -25,8 +27,10 @@ import { userName } from '../../user.js';
 import { slugify } from '../../util/text.js';
 import { TEST_CMD_RE, toolActivity } from '../activity.js';
 import { modelLabel } from '../models.js';
+import { addEvent, finishedLine, inferLane, mergeLane, newSession, numbersMarkdown, waitingLabel } from '../../../../tools/mirror/stats.mjs';
 import { EventLog, parseEvent, type Cursor, type MirrorEvent } from './eventlog.js';
 import { MAX_ERRORS, MAX_FILES, renderLaneNote, type LaneSession } from './lanes.js';
+import type { LaneStats } from '../../../../tools/mirror/stats.mjs';
 
 export const MIRROR_STATUS = 'Mirror of your Claude Code lanes';
 /** Order in which cast members take new sessions: workers first, Marlow last. */
@@ -37,6 +41,10 @@ export const MIRROR_TEST_RE = new RegExp(`${TEST_CMD_RE.source}|(^|[\\s;&|(])(np
 const PUSH_RE = /(^|[\s;&|(])git\s+push\b/;
 const PR_RE = /(^|[\s;&|(])gh\s+pr\s+create\b/;
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+/** the nameplate shows a wait at most once a minute */
+export const WAIT_REFRESH_MS = 60_000;
+/** a lane waiting on you stays on shift this long past the idle sweep; an abandoned prompt does not hold an avatar */
+export const WAIT_SHOW_MAX_MS = 2 * 60 * 60_000;
 
 interface MirrorState {
   cursor?: Cursor;
@@ -108,6 +116,7 @@ export class MirrorBackend implements Backend {
         }
       }
       if (cursor && (cursor.ino !== st.cursor?.ino || cursor.offset !== st.cursor?.offset)) st.cursor = cursor;
+      this.refreshWaits();
       this.sweepIdle();
       if (applied || this.fm.store.isDirty) {
         this.fm.flushLogs();
@@ -124,6 +133,7 @@ export class MirrorBackend implements Backend {
   private apply(e: MirrorEvent): void {
     const s = this.session(e);
     s.lastTs = Math.max(s.lastTs, e.ts);
+    this.count(s, e);
     switch (e.event) {
       case 'SessionStart':
         if (e.model) s.model = modelLabel(e.model) ?? e.model;
@@ -168,6 +178,33 @@ export class MirrorBackend implements Backend {
     return s;
   }
 
+  /** Fold the event into the session's numbers, and end a wait on the founder the event answers. */
+  private count(s: LaneSession, e: MirrorEvent): void {
+    if (!s.stats) {
+      s.stats = newSession(e);
+      if (s.startedAt < e.ts) {
+        // saved by a Foreman that did not count yet: the numbers start where this view did
+        s.stats.first = s.startedAt;
+        s.stats.partial = true;
+      }
+    }
+    addEvent(s.stats, e);
+    if (e.event === 'Notification' || s.waitingSince === undefined) return;
+    delete s.waitingSince;
+    delete s.waitShownAt;
+    if (s.agentId && this.fm.agent(s.agentId)?.state === 'waiting_user' && (e.event === 'PostToolUse' || e.event === 'PostToolUseFailure')) {
+      const task = s.taskId ? this.fm.tasks.get(s.taskId) : undefined;
+      this.fm.setAgent(s.agentId, { state: 'thinking', station: 'desk', activity: task ? `thinking (${task.title})` : 'thinking' });
+    }
+  }
+
+  /** A resumed session without the brief belongs to the lane most recently seen on its repo and branch. */
+  private resumedLane(s: LaneSession): string | undefined {
+    if (s.lane || !s.stats) return undefined;
+    const others = Object.values(this.state.sessions).filter((x) => x.sid !== s.sid && x.stats).map((x) => ({ ...x.stats!, lane: x.lane ?? x.stats!.lane }));
+    return inferLane({ ...s.stats, lane: null }, others);
+  }
+
   private freeAgent(): string | undefined {
     const busy = new Set(Object.values(this.state.sessions).filter((x) => x.live && x.agentId).map((x) => x.agentId));
     return MIRROR_CAST.find((id) => !busy.has(id) && this.fm.agent(id));
@@ -199,6 +236,7 @@ export class MirrorBackend implements Backend {
   private onPrompt(s: LaneSession, e: MirrorEvent): void {
     s.turns++;
     if (e.first && e.lane && !s.lane) s.lane = e.lane;
+    if (s.turns === 1 && !s.lane) s.lane = this.resumedLane(s);
     let task = s.taskId ? this.fm.tasks.get(s.taskId) : undefined;
     if (!task && s.lane && this.state.laneTasks[s.lane]) task = this.fm.tasks.get(this.state.laneTasks[s.lane]!);
     if (!task) {
@@ -273,7 +311,10 @@ export class MirrorBackend implements Backend {
   private onNotification(s: LaneSession, e: MirrorEvent): void {
     if (e.kind === 'auth_success') return;
     const what = e.kind === 'permission_prompt' ? 'a permission' : e.kind === 'idle_prompt' ? 'your next prompt' : 'you';
-    if (s.agentId) this.fm.setAgent(s.agentId, { state: 'waiting_user', station: 'user', activity: 'waiting for you' });
+    s.waitingSince ??= e.ts;
+    const now = this.fm.ctx.now();
+    s.waitShownAt = now;
+    if (s.agentId) this.fm.setAgent(s.agentId, { state: 'waiting_user', station: 'user', activity: waitingLabel(Math.max(0, now - s.waitingSince)) });
     // display only: no Decision, nothing to answer here; the answer is given in Claude Code
     this.fm.bus.feed('decision', `${s.agentId ? this.fm.nameOf(s.agentId) : s.branch} is waiting for ${what} in Claude Code (${s.lane ?? s.branch})`, s.agentId ? { agentId: s.agentId, to: 'user' } : { to: 'user' });
   }
@@ -287,7 +328,8 @@ export class MirrorBackend implements Backend {
       this.fm.setAgent(s.agentId, { state: 'idle', station: 'lounge', activity: task ? `${task.title}: ready for review` : 'turn finished' });
       this.fm.agentLog(s.agentId, 'result', `Turn finished${task ? `: ${task.title} waits for your review` : ''}`);
     }
-    this.writeNote(s);
+    const lane = this.writeNote(s);
+    if (lane) this.fm.bus.feed('task', finishedLine(lane, s.lane ?? task?.title ?? s.branch), s.agentId ? { agentId: s.agentId } : {});
   }
 
   /** SessionEnd, or no events for the idle time: off shift; a lane waiting for an avatar gets this one. */
@@ -296,6 +338,8 @@ export class MirrorBackend implements Backend {
     s.live = false;
     s.endedAt = ts;
     s.endReason = reason;
+    delete s.waitingSince;
+    delete s.waitShownAt;
     const task = s.taskId ? this.fm.tasks.get(s.taskId) : undefined;
     if (task && task.status === 'doing') this.fm.tasks.setStatus(task.id, 'review', { force: true });
     const freed = s.agentId;
@@ -313,16 +357,32 @@ export class MirrorBackend implements Backend {
     }
   }
 
+  /** Nameplates of lanes waiting on you say for how long; the text changes by the minute, so once a minute is plenty. */
+  private refreshWaits(): void {
+    const now = this.fm.ctx.now();
+    for (const s of Object.values(this.state.sessions)) {
+      if (!s.live || !s.agentId || s.waitingSince === undefined) continue;
+      if (s.waitShownAt !== undefined && now - s.waitShownAt < WAIT_REFRESH_MS) continue;
+      const label = waitingLabel(Math.max(0, now - s.waitingSince));
+      s.waitShownAt = now;
+      const a = this.fm.agent(s.agentId);
+      if (a?.state === 'waiting_user' && a.activity !== label) this.fm.setAgent(s.agentId, { activity: label });
+    }
+  }
+
   private sweepIdle(): void {
     const now = this.fm.ctx.now();
     for (const s of Object.values(this.state.sessions)) {
+      // waiting on you is exactly when no events come: stay on shift for a while
+      if (s.waitingSince !== undefined && now - s.waitingSince < WAIT_SHOW_MAX_MS) continue;
       if (s.live && now - s.lastTs > this.cfg.idleMs) this.offShift(s, s.lastTs, `no events for ${Math.round(this.cfg.idleMs / 60_000)} min`);
     }
   }
 
   // ---- lane notes ------------------------------------------------------------------------------
 
-  private writeNote(s: LaneSession): void {
+  /** Write the lane's note (its sessions, then the Numbers) and return the lane's numbers. */
+  private writeNote(s: LaneSession): LaneStats | null {
     const st = this.state;
     if (!s.note) {
       if (s.lane) s.note = slugify(s.lane, 48);
@@ -334,7 +394,9 @@ export class MirrorBackend implements Backend {
     }
     const sessions = Object.values(st.sessions).filter((x) => x.note === s.note);
     const title = s.lane ?? `Unnamed lane ${s.note.replace(/^unnamed-/, '')}`;
-    this.fm.memory.write({ scope: 'lanes', slug: s.note, title, body: renderLaneNote(title, sessions), author: s.agentId ?? 'user' });
+    const lane = mergeLane(sessions.flatMap((x) => (x.stats ? [x.stats] : [])), { now: this.fm.ctx.now(), name: title });
+    this.fm.memory.write({ scope: 'lanes', slug: s.note, title, body: renderLaneNote(title, sessions, lane ? numbersMarkdown(lane) : undefined), author: s.agentId ?? 'user' });
+    return lane;
   }
 
   // ---- the world asks: a mirror only shows ------------------------------------------------------
