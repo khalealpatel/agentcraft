@@ -42,7 +42,8 @@ test('stats: the default table lists each lane since a date', () => {
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /lane\s+wall\s+active\s+waited\s+stops\s+longest\s+idle\s+tests\s+PR/);
   assert.match(r.out, /VOICE-PROMPT-02\s+2h10m\s+1h22m\s+23m\s+3\s+11m\s+25m \(1\)\s+3\/1\s+yes/);
-  assert.match(r.out, /STUDIO-RESUME\s+16h10m\s+1h20m\s+0m\s+0\s+0m\s+14h50m \(1\)\s+3\/0\s+yes/);
+  // ends on a Stop nobody answered: an open wait (it runs to the real clock here); the night between its sessions is idle
+  assert.match(r.out, /STUDIO-RESUME\s+16h10m\s+1h20m\s+\d+h\d\dm \(open\)\s+1\s+\d+h\d\dm\s+14h50m \(1\)\s+3\/0\s+yes/);
 });
 
 test('stats: lanes that ended before --since are left out', () => {

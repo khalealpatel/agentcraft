@@ -127,7 +127,9 @@ test('fixture lane 2: two sessions, resumed the next day, one lane', () => {
   assert.equal(l.end, Date.parse('2026-10-13T09:10:00Z'));
   assert.equal(l.wall, 970 * MIN);
   assert.deepEqual(l.idle, { count: 1, ms: 890 * MIN }); // the night between the sessions
-  assert.equal(l.waits.count, 0);
+  // session 1 ended (Stop, then SessionEnd: not a wait); session 2 ends on a Stop that nothing has answered
+  assert.equal(l.waits.count, 1);
+  assert.deepEqual(l.waits.open, { since: Date.parse('2026-10-13T09:10:00Z'), ms: 890 * MIN, kind: 'turn_end' });
   assert.equal(l.active, 80 * MIN);
   assert.deepEqual(l.calls, { total: 10, read: 3, edit: 3, bash: 4, other: 0 });
   assert.equal(l.files.count, 2);
@@ -147,7 +149,7 @@ test('a wait opens at a Notification and closes at the session\'s next non-Notif
     ev(1, 'PreToolUse', { tool: 'Bash', cmd: 'ls' }),
     ev(2, 'Notification', { kind: 'permission_prompt' }),
     ev(9, 'PostToolUse', { tool: 'Bash', cmd: 'ls', ok: true }),
-    ev(10, 'Stop'),
+    ev(10, 'Stop'), ev(10, 'SessionEnd'),
   ]);
   assert.equal(l.waits.count, 1);
   assert.equal(l.waits.ms, 7 * MIN);
@@ -170,7 +172,7 @@ test('back to back Notifications are one wait; auth_success is not a wait', () =
 });
 
 test('a Notification with no kind still opens a wait (an unknown type is still waiting on you)', () => {
-  const l = one([ev(0, 'SessionStart'), ev(0, 'UserPromptSubmit', { first: true, lane: 'W-3' }), ev(1, 'Notification'), ev(5, 'Stop')]);
+  const l = one([ev(0, 'SessionStart'), ev(0, 'UserPromptSubmit', { first: true, lane: 'W-3' }), ev(1, 'Notification'), ev(5, 'Stop'), ev(5, 'SessionEnd')]);
   assert.equal(l.waits.count, 1);
   assert.equal(l.waits.ms, 4 * MIN);
 });
@@ -216,7 +218,7 @@ test('edge: an open wait of a session that never wrote again closes when the lan
     ev(0, 'SessionStart', {}, A), ev(0, 'UserPromptSubmit', { first: true, lane: 'KILLED-1' }, A),
     ev(10, 'Notification', { kind: 'permission_prompt' }, A), // the terminal was closed here: no SessionEnd
     ev(60, 'SessionStart', { source: 'resume' }, B), ev(60, 'UserPromptSubmit', { first: true, lane: 'KILLED-1' }, B),
-    ev(70, 'Stop', {}, B),
+    ev(70, 'Stop', {}, B), ev(70, 'SessionEnd', {}, B),
   ], T0 + 600 * MIN);
   assert.equal(l.waits.count, 1);
   assert.equal(l.waits.open, null);
@@ -232,18 +234,32 @@ test('edge: an open wait of a session that never wrote again closes when the lan
 test('idle gaps: over 10 minutes without events, not waiting; exactly 10 is not idle', () => {
   const l = one([
     ev(0, 'SessionStart'), ev(0, 'UserPromptSubmit', { first: true, lane: 'IDLE-1' }),
-    ev(1, 'Stop'),
-    ev(11, 'UserPromptSubmit'), // exactly 10 min: not idle
-    ev(12, 'Stop'),
-    ev(40, 'UserPromptSubmit'), // 28 min: idle
-    ev(41, 'Stop'),
-    ev(60, 'UserPromptSubmit'), // 19 min: idle
-    ev(61, 'Stop'),
+    ev(1, 'PostToolUse', { tool: 'Read', ok: true }),
+    ev(11, 'PostToolUse', { tool: 'Read', ok: true }), // exactly 10 min: not idle
+    ev(12, 'PostToolUse', { tool: 'Read', ok: true }),
+    ev(40, 'PostToolUse', { tool: 'Read', ok: true }), // 28 min: idle
+    ev(41, 'PostToolUse', { tool: 'Read', ok: true }),
+    ev(60, 'PostToolUse', { tool: 'Read', ok: true }), // 19 min: idle
+    ev(61, 'PostToolUse', { tool: 'Read', ok: true }),
   ]);
   assert.equal(IDLE_MS, 10 * MIN);
   assert.deepEqual(l.idle, { count: 2, ms: 47 * MIN });
+  assert.equal(l.waits.count, 0);
   assert.equal(l.wall, 61 * MIN);
   assert.equal(l.active, 14 * MIN);
+});
+
+test('time after a Stop is a wait on you, however short; it is idle only when nothing was owed', () => {
+  const l = one([
+    ev(0, 'SessionStart'), ev(0, 'UserPromptSubmit', { first: true, lane: 'IDLE-0' }),
+    ev(1, 'Stop'), ev(11, 'UserPromptSubmit'), // 10 minutes of your turn
+    ev(12, 'Stop'), ev(40, 'UserPromptSubmit'), // 28
+    ev(41, 'Stop'), ev(41, 'SessionEnd'),
+  ]);
+  assert.deepEqual(l.idle, { count: 0, ms: 0 });
+  assert.equal(l.waits.count, 2);
+  assert.equal(l.waits.ms, 38 * MIN);
+  assert.equal(l.active, 3 * MIN);
 });
 
 test('a tool that runs for a long time (Pre ... Post) is work, not an idle gap', () => {
@@ -260,10 +276,10 @@ test('a tool that runs for a long time (Pre ... Post) is work, not an idle gap',
 test('an idle_prompt wait is waiting on the founder, not an idle gap', () => {
   const l = one([
     ev(0, 'SessionStart'), ev(0, 'UserPromptSubmit', { first: true, lane: 'IDLE-2' }),
-    ev(5, 'Stop'),
+    ev(5, 'PostToolUse', { tool: 'Read', ok: true }),
     ev(6, 'Notification', { kind: 'idle_prompt' }),
     ev(66, 'UserPromptSubmit'),
-    ev(67, 'Stop'),
+    ev(67, 'Stop'), ev(67, 'SessionEnd'),
   ]);
   assert.equal(l.waits.count, 1);
   assert.equal(l.waits.ms, 60 * MIN);
@@ -437,7 +453,7 @@ test('edge: clock skew (a timestamp that goes backwards) is clamped, counted, an
     ev(5, 'PostToolUse', { tool: 'Read', ok: true }), // the clock stepped back 5 minutes
     ev(6, 'Notification', { kind: 'permission_prompt' }),
     ev(4, 'PostToolUse', { tool: 'Bash', ok: true }), // and again: a wait that would be negative
-    ev(20, 'Stop'),
+    ev(20, 'Stop'), ev(20, 'SessionEnd'),
   ]);
   assert.equal(l.skew, 3);
   assert.equal(l.start, T0);
@@ -515,7 +531,8 @@ test('lanesTable: lane, wall, active, waited (total, count, longest), idle, test
   const v = rows.find((r) => r.startsWith('VOICE-PROMPT-02'));
   assert.match(v, /2h10m\s+1h22m\s+23m\s+3\s+11m\s+25m \(1\)\s+3\/1\s+yes/);
   const s = rows.find((r) => r.startsWith('STUDIO-RESUME'));
-  assert.match(s, /16h10m\s+1h20m\s+0m\s+0\s+0m\s+14h50m \(1\)\s+3\/0\s+yes/);
+  // its last Stop was never answered: the 14h50m since then is an open wait, as well as the night between sessions
+  assert.match(s, /16h10m\s+1h20m\s+14h50m \(open\)\s+1\s+14h50m\s+14h50m \(1\)\s+3\/0\s+yes/);
 });
 
 test('lanesTable: nothing to show', () => {
@@ -567,4 +584,191 @@ test('waitingLabel: "waiting on you" first, then the minutes', () => {
   assert.equal(waitingLabel(59_000), 'waiting on you');
   assert.equal(waitingLabel(12 * MIN + 20_000), 'waiting on you 12m');
   assert.equal(waitingLabel(75 * MIN), 'waiting on you 1h15m');
+});
+
+// ---------------------------------------------------------------------------------------------
+// STUDIO-05: waiting on the founder is a Stop, an unanswered AskUserQuestion, or a Notification
+// ---------------------------------------------------------------------------------------------
+
+const FOUNDER = path.join(HERE, 'fixtures', 'mirror-stats', 'founder-waits.jsonl');
+const founderEvents = () => fs.readFileSync(FOUNDER, 'utf8').trimEnd().split('\n').map((l) => JSON.parse(l));
+const FOUNDER_NOW = Date.parse('2026-10-14T10:00:00Z');
+const founderLanes = () => computeLanes(founderEvents(), { now: FOUNDER_NOW });
+const HOUR = 60 * MIN;
+const head = (lane) => [ev(0, 'SessionStart'), ev(0, 'UserPromptSubmit', { first: true, lane })];
+const prOpened = (t) => [
+  ev(t, 'PreToolUse', { tool: 'Bash', cmd: 'gh pr create --base suzy --title "x"' }),
+  ev(t + 0.1, 'PostToolUse', { tool: 'Bash', cmd: 'gh pr create --base suzy --title "x"', ok: true }),
+];
+
+test('founder fixture VOICE-PROMPT-03: the disk STOP overnight is 16h52m waited, not idle', () => {
+  const l = byLane(founderLanes(), 'VOICE-PROMPT-03');
+  assert.equal(l.wall, 17 * HOUR + 15 * MIN);
+  assert.equal(l.waits.count, 1);
+  assert.equal(l.waits.ms, 16 * HOUR + 52 * MIN);
+  assert.equal(l.waits.longest, 16 * HOUR + 52 * MIN);
+  assert.deepEqual(l.waits.byKind, { turn_end: 1 });
+  assert.equal(l.waits.open, null);
+  assert.deepEqual(l.idle, { count: 0, ms: 0 });
+  assert.equal(l.active, 23 * MIN);
+});
+
+test('founder fixture SMS-CONSENT-02: an AskUserQuestion box left open overnight is a wait, not active time', () => {
+  const l = byLane(founderLanes(), 'SMS-CONSENT-02');
+  assert.equal(l.wall, 16 * HOUR + 44 * MIN);
+  assert.equal(l.waits.count, 2);
+  assert.equal(l.waits.ms, 6 * MIN + 16 * HOUR + 26 * MIN);
+  assert.equal(l.waits.longest, 16 * HOUR + 26 * MIN);
+  assert.deepEqual(l.waits.byKind, { permission_prompt: 1, ask_user_question: 1 });
+  assert.deepEqual(l.idle, { count: 0, ms: 0 });
+  assert.equal(l.active, 12 * MIN);
+});
+
+test('founder fixture: the table the founder sees', () => {
+  const rows = lanesTable(founderLanes()).split('\n');
+  assert.match(rows.find((r) => r.startsWith('VOICE-PROMPT-03')), /17h15m\s+23m\s+16h52m\s+1\s+16h52m\s+0m\s+1\/0\s+no/);
+  assert.match(rows.find((r) => r.startsWith('SMS-CONSENT-02')), /16h44m\s+12m\s+16h32m\s+2\s+16h26m\s+0m\s+0\/0\s+no/);
+});
+
+test('a Stop opens a wait that the next UserPromptSubmit closes', () => {
+  const l = one([...head('S-1'), ev(5, 'Stop'), ev(35, 'UserPromptSubmit'), ev(40, 'Stop'), ev(41, 'UserPromptSubmit'), ev(45, 'Stop'), ev(46, 'SessionEnd')]);
+  assert.equal(l.waits.count, 2); // the last Stop is followed by SessionEnd: not a wait
+  assert.equal(l.waits.ms, 30 * MIN + 1 * MIN);
+  assert.equal(l.waits.longest, 30 * MIN);
+  assert.equal(l.waits.open, null);
+  assert.equal(l.active, 46 * MIN - 31 * MIN);
+});
+
+test('an unanswered Stop is an open wait, measured to now', () => {
+  const l = one([...head('S-2'), ev(5, 'Stop')], T0 + 65 * MIN);
+  assert.deepEqual(l.waits.open, { since: T0 + 5 * MIN, ms: 60 * MIN, kind: 'turn_end' });
+  assert.equal(l.waits.ms, 60 * MIN);
+  assert.match(lanesTable([l]), /\(open\)/);
+});
+
+test('a finished lane (PR opened, then Stop and SessionEnd) shows no trailing wait', () => {
+  const l = one([
+    ...head('FIN-1'), ev(1, 'PreToolUse', { tool: 'Edit', file: 'a.ts' }), ev(1.1, 'PostToolUse', { tool: 'Edit', file: 'a.ts', ok: true }),
+    ...prOpened(3),
+    ev(4, 'Stop'),
+    ev(5, 'Notification', { kind: 'idle_prompt' }), // Claude Code's "waiting for input" nudge after the turn ended
+    ev(6, 'SessionEnd', { reason: 'prompt_input_exit' }),
+  ], T0 + 600 * MIN);
+  assert.equal(l.pr.opened, true);
+  assert.equal(l.waits.count, 0);
+  assert.equal(l.waits.ms, 0);
+  assert.equal(l.waits.open, null);
+  assert.equal(l.wall, 6 * MIN);
+  assert.equal(l.active, 6 * MIN);
+});
+
+test('a finished lane that is simply left open (PR opened, Stop, no SessionEnd) is not waiting either', () => {
+  const l = one([...head('FIN-2'), ...prOpened(3), ev(4, 'Stop')], T0 + 600 * MIN);
+  assert.equal(l.waits.count, 0);
+  assert.equal(l.waits.open, null);
+});
+
+test('a PR opened in an earlier turn still makes a later Stop a finish, not a wait', () => {
+  const l = one([...head('FIN-3'), ...prOpened(2), ev(3, 'Stop'), ev(30, 'UserPromptSubmit'), ev(31, 'Stop'), ev(32, 'SessionEnd')]);
+  assert.equal(l.waits.count, 0);
+});
+
+test('a Stop followed by SessionEnd with no PR is not a wait; a long gap before the exit is idle, not waited', () => {
+  const l = one([...head('END-1'), ev(5, 'Stop'), ev(65, 'SessionEnd', { reason: 'prompt_input_exit' })]);
+  assert.equal(l.waits.count, 0);
+  assert.deepEqual(l.waits.byKind, {});
+  assert.deepEqual(l.idle, { count: 1, ms: 60 * MIN });
+  assert.equal(l.active, 5 * MIN);
+});
+
+test('a Stop plus the idle_prompt Notification that follows it is one wait, counted once', () => {
+  const l = one([...head('OVL-1'), ev(5, 'Stop'), ev(6, 'Notification', { kind: 'idle_prompt' }), ev(66, 'UserPromptSubmit'), ev(67, 'Stop'), ev(68, 'SessionEnd')]);
+  assert.equal(l.waits.count, 1);
+  assert.equal(l.waits.ms, 61 * MIN); // from the Stop, not from the Notification
+  assert.deepEqual(l.waits.byKind, { turn_end: 1 });
+  assert.deepEqual(l.idle, { count: 0, ms: 0 });
+});
+
+test('an AskUserQuestion with a Notification inside it is one wait from the question to the answer', () => {
+  const l = one([
+    ...head('OVL-2'), ev(2, 'PreToolUse', { tool: 'AskUserQuestion' }), ev(2.1, 'Notification', { kind: 'elicitation_dialog' }),
+    ev(32, 'PostToolUse', { tool: 'AskUserQuestion', ok: true }), ev(33, 'Stop'), ev(34, 'SessionEnd'),
+  ]);
+  assert.equal(l.waits.count, 1);
+  assert.equal(l.waits.ms, 30 * MIN);
+  assert.deepEqual(l.waits.byKind, { ask_user_question: 1 });
+});
+
+test('an ask tool is any tool whose name contains AskUser; another tool\'s result does not answer it', () => {
+  const l = one([
+    ...head('ASK-1'),
+    ev(2, 'PreToolUse', { tool: 'mcp__studio__AskUserChoice' }),
+    ev(3, 'PreToolUse', { tool: 'Read', file: 'a.ts' }), ev(3.1, 'PostToolUse', { tool: 'Read', file: 'a.ts', ok: true }), // a parallel call finishes
+    ev(20, 'PostToolUseFailure', { tool: 'mcp__studio__AskUserChoice', ok: false }), // declined or interrupted still ends it
+    ev(21, 'Stop'), ev(22, 'SessionEnd'),
+  ]);
+  assert.equal(l.waits.count, 1);
+  assert.equal(l.waits.ms, 18 * MIN);
+});
+
+test('an AskUserQuestion with no answer yet is an open wait', () => {
+  const l = one([...head('ASK-2'), ev(2, 'PreToolUse', { tool: 'AskUserQuestion' })], T0 + 12 * MIN);
+  assert.deepEqual(l.waits.open, { since: T0 + 2 * MIN, ms: 10 * MIN, kind: 'ask_user_question' });
+});
+
+test('a question that never gets a result ends at the next prompt or Stop, never lasting forever', () => {
+  const l = one([...head('ASK-3'), ev(2, 'PreToolUse', { tool: 'AskUserQuestion' }), ev(12, 'UserPromptSubmit'), ev(13, 'PreToolUse', { tool: 'Read' }), ev(14, 'PostToolUse', { tool: 'Read', ok: true }), ev(15, 'Stop'), ev(16, 'SessionEnd')]);
+  assert.equal(l.waits.count, 1);
+  assert.equal(l.waits.ms, 10 * MIN);
+  assert.equal(l.waits.open, null);
+});
+
+test('a lane that goes back to work on its own (tool use with no prompt) is no longer waiting', () => {
+  const l = one([...head('SELF-1'), ev(5, 'Stop'), ev(9, 'PreToolUse', { tool: 'Bash', cmd: 'ls' }), ev(9.1, 'PostToolUse', { tool: 'Bash', cmd: 'ls', ok: true }), ev(10, 'Stop'), ev(11, 'SessionEnd')]);
+  assert.equal(l.waits.count, 1);
+  assert.equal(l.waits.ms, 4 * MIN);
+});
+
+test('a session that never wrote again after a Stop: the wait closes when the lane\'s next session starts', () => {
+  const A = 'aaaaaaaaaaaaaaaa';
+  const B = 'bbbbbbbbbbbbbbbb';
+  const l = one([
+    ev(0, 'SessionStart', {}, A), ev(0, 'UserPromptSubmit', { first: true, lane: 'NEXT-1' }, A),
+    ev(10, 'Stop', {}, A), // the terminal was closed: no SessionEnd
+    ev(8 * 60, 'SessionStart', { source: 'resume' }, B), ev(8 * 60, 'UserPromptSubmit', { first: true, lane: 'NEXT-1' }, B),
+    ev(8 * 60 + 5, 'Stop', {}, B), ev(8 * 60 + 6, 'SessionEnd', {}, B),
+  ], T0 + 24 * HOUR);
+  assert.equal(l.waits.count, 1);
+  assert.equal(l.waits.ms, 8 * HOUR - 10 * MIN);
+  assert.equal(l.waits.open, null);
+  assert.deepEqual(l.idle, { count: 0, ms: 0 });
+});
+
+test('the session state exposes what the lane is waiting on (the nameplate and notify read it)', () => {
+  let s;
+  const feed = (e) => { s = addEvent(s ?? newSession(e), strip(e)); return s.openWait; };
+  assert.equal(feed(ev(0, 'SessionStart')), null);
+  assert.equal(feed(ev(1, 'UserPromptSubmit', { first: true, lane: 'ST-1' })), null);
+  assert.deepEqual(feed(ev(2, 'PreToolUse', { tool: 'AskUserQuestion' })), { since: T0 + 2 * MIN, kind: 'ask_user_question' });
+  assert.equal(feed(ev(3, 'PostToolUse', { tool: 'AskUserQuestion', ok: true })), null);
+  assert.deepEqual(feed(ev(4, 'Stop')), { since: T0 + 4 * MIN, kind: 'turn_end' });
+  assert.equal(feed(ev(5, 'UserPromptSubmit')), null);
+});
+
+test('a state saved before the hold bookkeeping existed (an open Notification wait) still closes on the next event', () => {
+  const s = newSession(ev(0, 'SessionStart'));
+  addEvent(s, strip(ev(0, 'SessionStart')));
+  addEvent(s, strip(ev(1, 'Notification', { kind: 'permission_prompt' })));
+  const old = JSON.parse(JSON.stringify(s));
+  delete old.hold;
+  delete old.finished;
+  addEvent(old, strip(ev(5, 'PostToolUse', { tool: 'Bash', ok: true })));
+  assert.equal(old.openWait, null);
+  assert.equal(old.waits.ms, 4 * MIN);
+});
+
+test('finishedLine counts the waits that have ended, not the Stop that just opened one', () => {
+  const l = one([...head('FL-1'), ev(2, 'Stop'), ev(12, 'UserPromptSubmit'), ev(14, 'Stop')], T0 + 14 * MIN);
+  assert.equal(l.waits.count, 2);
+  assert.equal(finishedLine(l), 'FL-1 finished: 14m, waited on you 10m across 1 stop');
 });

@@ -13,8 +13,13 @@
 //   git push / gh pr    the merge station; feed "Pushed" / "PR opened" with the branch
 //   Notification        `waiting_user` at the user station plus a feed line (display only); the
 //                       nameplate then counts "waiting on you 12m" (refreshed once a minute)
-//   Stop                task `review`, agent back to the lounge, lane note written (with its
-//                       Numbers), feed "<lane> finished: 2h10m, waited on you 23m across 4 stops, tests 6/6"
+//   AskUser* PreToolUse the same: a question box is open until its PostToolUse
+//   Stop                task `review`, lane note written (with its Numbers), feed "<lane> finished:
+//                       2h10m, waited on you 23m across 4 stops, tests 6/6". The lane now waits on
+//                       you for its next message (`waiting_user`, counting up), unless it is finished
+//                       (a PR was opened): then the agent goes back to the lounge
+//   all of these        what counts as waiting is decided once, in tools/mirror/stats.mjs (the
+//                       session's openWait); this file only shows it
 //   SessionEnd / idle   off shift
 //
 // It never runs agents, commands or git, never calls an API, and writes only through the Foreman
@@ -27,7 +32,7 @@ import { userName } from '../../user.js';
 import { slugify } from '../../util/text.js';
 import { TEST_CMD_RE, toolActivity } from '../activity.js';
 import { modelLabel } from '../models.js';
-import { addEvent, finishedLine, inferLane, mergeLane, newSession, numbersMarkdown, waitingLabel } from '../../../../tools/mirror/stats.mjs';
+import { addEvent, finishedLine, inferLane, isAskTool, mergeLane, newSession, numbersMarkdown, waitingLabel } from '../../../../tools/mirror/stats.mjs';
 import { EventLog, parseEvent, type Cursor, type MirrorEvent } from './eventlog.js';
 import { MAX_ERRORS, MAX_FILES, renderLaneNote, type LaneSession } from './lanes.js';
 import type { LaneStats } from '../../../../tools/mirror/stats.mjs';
@@ -178,7 +183,10 @@ export class MirrorBackend implements Backend {
     return s;
   }
 
-  /** Fold the event into the session's numbers, and end a wait on the founder the event answers. */
+  /**
+   * Fold the event into the session's numbers. The numbers decide whether the lane waits on the
+   * founder (a Stop, an open AskUser* call, a Notification): `waitingSince` follows their openWait.
+   */
   private count(s: LaneSession, e: MirrorEvent): void {
     if (!s.stats) {
       s.stats = newSession(e);
@@ -189,7 +197,12 @@ export class MirrorBackend implements Backend {
       }
     }
     addEvent(s.stats, e);
-    if (e.event === 'Notification' || s.waitingSince === undefined) return;
+    const open = s.stats.openWait;
+    if (open) {
+      s.waitingSince = open.since;
+      return;
+    }
+    if (s.waitingSince === undefined) return;
     delete s.waitingSince;
     delete s.waitShownAt;
     if (s.agentId && this.fm.agent(s.agentId)?.state === 'waiting_user' && (e.event === 'PostToolUse' || e.event === 'PostToolUseFailure')) {
@@ -266,6 +279,7 @@ export class MirrorBackend implements Backend {
   private onPreTool(s: LaneSession, e: MirrorEvent): void {
     const tool = e.tool ?? 'tool';
     const cmd = e.cmd ?? '';
+    if (isAskTool(tool)) return this.onQuestion(s);
     if (e.file && EDIT_TOOLS.has(tool) && !s.files.includes(e.file) && s.files.length < MAX_FILES) s.files.push(e.file);
     const task = s.taskId ? this.fm.tasks.get(s.taskId) : undefined;
     if (cmd && MIRROR_TEST_RE.test(cmd)) {
@@ -308,15 +322,30 @@ export class MirrorBackend implements Backend {
     }
   }
 
-  private onNotification(s: LaneSession, e: MirrorEvent): void {
-    if (e.kind === 'auth_success') return;
-    const what = e.kind === 'permission_prompt' ? 'a permission' : e.kind === 'idle_prompt' ? 'your next prompt' : 'you';
-    s.waitingSince ??= e.ts;
+  /** The nameplate of a lane waiting on you: "waiting on you", then the minutes. */
+  private showWait(s: LaneSession): void {
+    if (s.waitingSince === undefined) return;
     const now = this.fm.ctx.now();
     s.waitShownAt = now;
     if (s.agentId) this.fm.setAgent(s.agentId, { state: 'waiting_user', station: 'user', activity: waitingLabel(Math.max(0, now - s.waitingSince)) });
-    // display only: no Decision, nothing to answer here; the answer is given in Claude Code
+  }
+
+  /** Display only: no Decision, nothing to answer here; the answer is given in Claude Code. */
+  private feedWait(s: LaneSession, what: string): void {
     this.fm.bus.feed('decision', `${s.agentId ? this.fm.nameOf(s.agentId) : s.branch} is waiting for ${what} in Claude Code (${s.lane ?? s.branch})`, s.agentId ? { agentId: s.agentId, to: 'user' } : { to: 'user' });
+  }
+
+  private onNotification(s: LaneSession, e: MirrorEvent): void {
+    // not every Notification is a wait: a sign-in, or the idle nudge after a lane that finished
+    if (e.kind === 'auth_success' || s.waitingSince === undefined) return;
+    this.showWait(s);
+    this.feedWait(s, e.kind === 'permission_prompt' ? 'a permission' : e.kind === 'idle_prompt' ? 'your next prompt' : 'you');
+  }
+
+  /** An AskUser* tool call: a question box is open in Claude Code until its result comes back. */
+  private onQuestion(s: LaneSession): void {
+    this.showWait(s);
+    this.feedWait(s, 'your answer');
   }
 
   private onStop(s: LaneSession): void {
@@ -325,7 +354,9 @@ export class MirrorBackend implements Backend {
     if (s.testRunning && task) this.fm.tasks.update(task.id, { ci: 'unknown' });
     s.testRunning = false;
     if (s.agentId) {
-      this.fm.setAgent(s.agentId, { state: 'idle', station: 'lounge', activity: task ? `${task.title}: ready for review` : 'turn finished' });
+      // waiting on you for its next message, unless the lane is finished (a PR is open)
+      if (s.waitingSince !== undefined) this.showWait(s);
+      else this.fm.setAgent(s.agentId, { state: 'idle', station: 'lounge', activity: task ? `${task.title}: ready for review` : 'turn finished' });
       this.fm.agentLog(s.agentId, 'result', `Turn finished${task ? `: ${task.title} waits for your review` : ''}`);
     }
     const lane = this.writeNote(s);

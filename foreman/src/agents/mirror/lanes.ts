@@ -42,7 +42,7 @@ export interface LaneSession {
   errors: string[];
   /** the session's numbers (tools/mirror/stats.mjs), folded in as events arrive */
   stats?: SessionStats;
-  /** when the current wait on the founder began (a Notification not yet followed by another event) */
+  /** when the current wait on the founder began (the session's openWait: a Stop, an open question, a Notification) */
   waitingSince?: number;
   /** when the nameplate last showed the wait's duration */
   waitShownAt?: number;

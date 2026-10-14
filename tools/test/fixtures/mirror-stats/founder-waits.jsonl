@@ -1,0 +1,27 @@
+{"v":1,"ts":1791907200000,"sid":"d4d4d4d4d4d4d4d4","event":"SessionStart","repo":"agentcraft","branch":"voice-prompt-03","model":"claude-opus-5-5","source":"startup"}
+{"v":1,"ts":1791907205000,"sid":"d4d4d4d4d4d4d4d4","event":"UserPromptSubmit","repo":"agentcraft","branch":"voice-prompt-03","first":true,"lane":"VOICE-PROMPT-03"}
+{"v":1,"ts":1791907260000,"sid":"d4d4d4d4d4d4d4d4","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-03","tool":"Read","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791907262000,"sid":"d4d4d4d4d4d4d4d4","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-03","tool":"Read","file":"foreman/src/voice.ts","ok":true}
+{"v":1,"ts":1791907560000,"sid":"d4d4d4d4d4d4d4d4","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-03","tool":"Edit","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791907562000,"sid":"d4d4d4d4d4d4d4d4","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-03","tool":"Edit","file":"foreman/src/voice.ts","ok":true}
+{"v":1,"ts":1791907920000,"sid":"d4d4d4d4d4d4d4d4","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-03","tool":"Bash","cmd":"npm run check"}
+{"v":1,"ts":1791908100000,"sid":"d4d4d4d4d4d4d4d4","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-03","tool":"Bash","cmd":"npm run check","ok":true}
+{"v":1,"ts":1791908520000,"sid":"d4d4d4d4d4d4d4d4","event":"Stop","repo":"agentcraft","branch":"voice-prompt-03"}
+{"v":1,"ts":1791909000000,"sid":"e5e5e5e5e5e5e5e5","event":"SessionStart","repo":"agentcraft","branch":"sms-consent-02","model":"claude-opus-5-5","source":"startup"}
+{"v":1,"ts":1791909005000,"sid":"e5e5e5e5e5e5e5e5","event":"UserPromptSubmit","repo":"agentcraft","branch":"sms-consent-02","first":true,"lane":"SMS-CONSENT-02"}
+{"v":1,"ts":1791909060000,"sid":"e5e5e5e5e5e5e5e5","event":"PreToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Read","file":"docs/suzy/STUDIO-README.md"}
+{"v":1,"ts":1791909062000,"sid":"e5e5e5e5e5e5e5e5","event":"PostToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Read","file":"docs/suzy/STUDIO-README.md","ok":true}
+{"v":1,"ts":1791909240000,"sid":"e5e5e5e5e5e5e5e5","event":"PreToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Bash","cmd":"npm install"}
+{"v":1,"ts":1791909241000,"sid":"e5e5e5e5e5e5e5e5","event":"Notification","repo":"agentcraft","branch":"sms-consent-02","kind":"permission_prompt"}
+{"v":1,"ts":1791909601000,"sid":"e5e5e5e5e5e5e5e5","event":"PostToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Bash","cmd":"npm install","ok":true}
+{"v":1,"ts":1791909840000,"sid":"e5e5e5e5e5e5e5e5","event":"PreToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Edit","file":"foreman/src/sms.ts"}
+{"v":1,"ts":1791909842000,"sid":"e5e5e5e5e5e5e5e5","event":"PostToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Edit","file":"foreman/src/sms.ts","ok":true}
+{"v":1,"ts":1791909960000,"sid":"e5e5e5e5e5e5e5e5","event":"PreToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"AskUserQuestion"}
+{"v":1,"ts":1791969120000,"sid":"e5e5e5e5e5e5e5e5","event":"PostToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"AskUserQuestion","ok":true}
+{"v":1,"ts":1791969150000,"sid":"e5e5e5e5e5e5e5e5","event":"PreToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Edit","file":"foreman/src/sms.ts"}
+{"v":1,"ts":1791969152000,"sid":"e5e5e5e5e5e5e5e5","event":"PostToolUse","repo":"agentcraft","branch":"sms-consent-02","tool":"Edit","file":"foreman/src/sms.ts","ok":true}
+{"v":1,"ts":1791969180000,"sid":"e5e5e5e5e5e5e5e5","event":"Stop","repo":"agentcraft","branch":"sms-consent-02"}
+{"v":1,"ts":1791969240000,"sid":"d4d4d4d4d4d4d4d4","event":"UserPromptSubmit","repo":"agentcraft","branch":"voice-prompt-03","first":false}
+{"v":1,"ts":1791969240000,"sid":"e5e5e5e5e5e5e5e5","event":"SessionEnd","repo":"agentcraft","branch":"sms-consent-02","reason":"prompt_input_exit"}
+{"v":1,"ts":1791969260000,"sid":"d4d4d4d4d4d4d4d4","event":"Stop","repo":"agentcraft","branch":"voice-prompt-03"}
+{"v":1,"ts":1791969300000,"sid":"d4d4d4d4d4d4d4d4","event":"SessionEnd","repo":"agentcraft","branch":"voice-prompt-03","reason":"prompt_input_exit"}
