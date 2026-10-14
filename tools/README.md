@@ -71,10 +71,25 @@ node tools/suzy.mjs stats --since 2026-10-01 --json    # machine output
 node tools/suzy.mjs stats --lane VOICE-PROMPT-02 --md  # one lane as a block for a PR body
 ```
 
+A lane is waiting on you from a Stop (until your next prompt), an unanswered `AskUserQuestion`
+or a Notification; overlaps count once, and a lane that opened its PR or closed its session is
+finished, not waiting. `notify` shows a macOS notification the moment a lane starts waiting
+("needs you": asked a question, finished its turn, needs permission) or opens a PR. It only reads
+the same events; the hook is unchanged. See "Get pinged when a lane needs you" in the studio
+README.
+
+```sh
+node tools/suzy.mjs notify [--all] [--dry-run]  # follow the events; osascript on macOS, prints elsewhere
+node tools/suzy.mjs notify install [--apply]    # launchd agent ~/Library/LaunchAgents/dev.agentcraft.suzy-notify.plist
+node tools/suzy.mjs notify uninstall [--apply]  # (--apply needs an interactive terminal; dry run by default)
+```
+
 The hook is `tools/mirror/hook.mjs` (pure logic in `tools/mirror/lib.mjs`): async, silent,
 always exit 0, no network, no child processes; it appends allowlisted, scrubbed lines to
 `~/.agentcraft/mirror/events.jsonl`. `unix.mjs launch --backend mirror` works too. The numbers are
-`tools/mirror/stats.mjs` (pure functions, tests in `tools/test/mirror-stats*.test.mjs`).
+`tools/mirror/stats.mjs` (pure functions, tests in `tools/test/mirror-stats*.test.mjs`); the log
+cursor shared by the Foreman and `notify` is `tools/mirror/tail.mjs`, and `notify` is
+`tools/mirror/notify.mjs` (tests in `tools/test/mirror-notify.test.mjs`).
 
 ### Your own launcher instance (Prism, MultiMC, ...)
 

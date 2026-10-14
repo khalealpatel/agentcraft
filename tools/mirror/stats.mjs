@@ -8,8 +8,14 @@
 //
 // The metrics (see docs/suzy/STUDIO-README.md, "Numbers"):
 //   wall      first to last event of the lane
-//   waited    each Notification opens a wait, closed by the session's next non-Notification event
-//   idle      no events for over 10 min while not waiting (a running tool is not idle)
+//   waited    time the lane waited on the founder. A wait opens at any of
+//               - a Stop (the turn ended; the next message is the founder's), closed by the session's next
+//                 UserPromptSubmit (or by the lane going back to work on its own); not a wait when the lane
+//                 is finished: a PR was already opened, or the Stop is followed by SessionEnd
+//               - a PreToolUse of an AskUser* tool, closed by its PostToolUse (or the next prompt or Stop)
+//               - a Notification (not auth_success), closed by the session's next non-Notification event
+//             and overlapping waits count once, from the first to the last of them
+//   idle      no events for over 10 min while not waiting and no tool running
 //   active    wall minus the closed waits minus idle
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,8 +44,11 @@ export function classifyTool(name) {
 const TEST_RE =
   /(^|[\s;&|(])((npm|pnpm|yarn|bun)\s+(run\s+)?test\b|npx\s+(vitest|jest|mocha)\b|vitest\b|jest\b|pytest\b|go\s+test\b|cargo\s+test\b|node\s+--test\b|dotnet\s+test\b|mvn\s+test\b|gradlew?\s+test\b|python\s+-m\s+(pytest|unittest)\b|tsc\b.*--noEmit)|(^|[\s;&|(])(npm|pnpm|yarn)\s+run\s+check\b/;
 const PR_RE = /(^|[\s;&|(])gh\s+pr\s+create\b/;
+const ASK_RE = /AskUser/i;
 const PUSH_RE = /(^|[\s;&|(])git\s+push\b([^;&|\n]*)/;
 
+/** A tool that puts a question box in front of the founder (AskUserQuestion, or any AskUser* tool). */
+export const isAskTool = (name) => typeof name === 'string' && ASK_RE.test(name);
 export const isTestCommand = (cmd) => typeof cmd === 'string' && TEST_RE.test(cmd);
 export const isPrCreate = (cmd) => typeof cmd === 'string' && PR_RE.test(cmd);
 
@@ -92,17 +101,31 @@ export function newSession(e) {
     pr: null,
     pushed: null,
     waits: { count: 0, ms: 0, longest: 0, byKind: {} },
+    /** the wait in progress: when it began and what opened it (a Notification kind, turn_end, ask_user_question) */
     openWait: null,
+    /** what keeps openWait open: a Notification, a Stop, and how many question boxes are unanswered */
+    hold: { notif: false, stop: false, ask: 0 },
+    /** the last Stop ended a finished lane (PR opened): no wait, and no idle_prompt nudge starts one */
+    finished: false,
     idle: { count: 0, ms: 0 },
     inFlight: 0,
     ended: false,
   };
 }
 
+/** Wait kinds that are not a Notification's own kind. */
+export const KIND_TURN_END = 'turn_end';
+export const KIND_ASK = 'ask_user_question';
+
 /**
  * Fold one event into a session (mutates and returns it). Events are applied in file order, which
  * is causal order; a timestamp that goes backwards (clock skew) is clamped to the previous one and
  * counted in `skew`, so no duration is ever negative.
+ *
+ * Waiting on the founder is `openWait`, held open by any of `hold.notif` (a Notification, until the
+ * session's next non-Notification event), `hold.stop` (a Stop, until the next prompt or the lane going
+ * back to work) and `hold.ask` (unanswered AskUser* tool calls). The wait is one: it begins at the
+ * first hold and ends when the last is released.
  */
 export function addEvent(s, e) {
   let ts = e.ts;
@@ -110,21 +133,92 @@ export function addEvent(s, e) {
     s.skew++;
     ts = s.last;
   }
+  // a state saved before holds existed: an open wait was a Notification
+  const hold = (s.hold ??= { notif: !!s.openWait, stop: false, ask: 0 });
+  s.finished ??= false;
+  s.openWait ??= null;
   const notification = e.event === 'Notification';
+  const ask = isAskTool(e.tool);
+  const wasOpen = s.openWait !== null;
+  const stopHeld = hold.stop;
 
-  if (s.openWait && !notification) {
-    // the wait ends at the session's next event that is not a Notification
-    const d = Math.max(0, ts - s.openWait.since);
-    s.waits.ms += d;
-    s.waits.longest = Math.max(s.waits.longest, d);
-    s.openWait = null;
-  } else if (!s.openWait && s.n > 0) {
+  // a gap with no wait and no running tool is idle
+  if (!wasOpen && s.n > 0) {
     const gap = ts - s.last;
-    // a tool that was started and has not reported back is running, not idle
     if (gap > IDLE_MS && s.inFlight === 0) {
       s.idle.count++;
       s.idle.ms += gap;
     }
+  }
+
+  // what this event releases
+  if (!notification) hold.notif = false;
+  switch (e.event) {
+    case 'SessionStart':
+    case 'UserPromptSubmit':
+      hold.stop = false;
+      hold.ask = 0;
+      s.finished = false;
+      break;
+    case 'PreToolUse':
+      hold.stop = false; // the lane is working again on its own (a background task finished)
+      break;
+    case 'PostToolUse':
+    case 'PostToolUseFailure':
+      hold.stop = false;
+      if (ask) hold.ask = Math.max(0, hold.ask - 1);
+      break;
+    case 'Stop':
+      hold.ask = 0;
+      break;
+    case 'SessionEnd':
+      hold.stop = false;
+      hold.ask = 0;
+      break;
+    default:
+      break;
+  }
+
+  // what it holds
+  let opened;
+  if (e.event === 'Stop') {
+    s.finished = s.pr !== null; // a PR is already open: the lane is finished, the next message is not owed
+    if (!s.finished) {
+      hold.stop = true;
+      opened = KIND_TURN_END;
+    }
+  } else if (e.event === 'PreToolUse' && ask) {
+    hold.ask++;
+    opened = KIND_ASK;
+  } else if (notification && e.kind !== 'auth_success' && !(e.kind === 'idle_prompt' && s.finished)) {
+    hold.notif = true;
+    opened = e.kind ?? 'unknown';
+  }
+
+  const holding = hold.notif || hold.stop || hold.ask > 0;
+  if (wasOpen) {
+    const { since, kind } = s.openWait;
+    if (e.event === 'SessionEnd' && stopHeld && kind === KIND_TURN_END) {
+      // the turn ended and the session closed with no message from the founder: that is a lane that is
+      // done, not one that waited; the stretch since the Stop is a gap with nothing happening
+      s.waits.count = Math.max(0, s.waits.count - 1);
+      if (--s.waits.byKind[KIND_TURN_END] <= 0) delete s.waits.byKind[KIND_TURN_END];
+      const gap = ts - since;
+      if (gap > IDLE_MS && s.inFlight === 0) {
+        s.idle.count++;
+        s.idle.ms += gap;
+      }
+      s.openWait = null;
+    } else if (!holding) {
+      const d = Math.max(0, ts - since);
+      s.waits.ms += d;
+      s.waits.longest = Math.max(s.waits.longest, d);
+      s.openWait = null;
+    }
+  } else if (holding && opened !== undefined) {
+    s.openWait = { since: ts, kind: opened };
+    s.waits.count++;
+    s.waits.byKind[opened] = (s.waits.byKind[opened] ?? 0) + 1;
   }
 
   if (e.repo) s.repo = e.repo;
@@ -153,14 +247,6 @@ export function addEvent(s, e) {
     case 'PostToolUseFailure':
       s.inFlight = Math.max(0, s.inFlight - 1);
       afterTool(s, e);
-      break;
-    case 'Notification':
-      if (e.kind !== 'auth_success' && !s.openWait) {
-        s.openWait = { since: ts, kind: e.kind ?? 'unknown' };
-        s.waits.count++;
-        const k = e.kind ?? 'unknown';
-        s.waits.byKind[k] = (s.waits.byKind[k] ?? 0) + 1;
-      }
       break;
     default:
       break;
@@ -218,7 +304,8 @@ export function mergeLane(sessions, { now = Date.now(), name } = {}) {
   const ss = [...sessions].sort((a, b) => a.first - b.first || a.last - b.last || (a.sid < b.sid ? -1 : 1));
   const start = Math.min(...ss.map((s) => s.first));
   const end = Math.max(...ss.map((s) => s.last));
-  const waits = { count: 0, ms: 0, longest: 0, byKind: {}, open: null };
+  const waits = { count: 0, ms: 0, longest: 0, byKind: {}, open: null, closed: { count: 0, ms: 0 } };
+  let stillOpen = { count: 0, ms: 0 };
   const idle = { count: 0, ms: 0 };
   const closedByNext = [];
   let closedMs = 0;
@@ -244,9 +331,13 @@ export function mergeLane(sessions, { now = Date.now(), name } = {}) {
       const d = Math.max(0, now - s.openWait.since);
       waits.ms += d;
       waits.longest = Math.max(waits.longest, d);
+      stillOpen.count++;
+      stillOpen.ms += d;
       if (!waits.open || s.openWait.since < waits.open.since) waits.open = { since: s.openWait.since, ms: d, kind: s.openWait.kind };
     }
   });
+
+  waits.closed = { count: waits.count - stillOpen.count, ms: waits.ms - stillOpen.ms };
 
   // the nights and lunches between sessions
   let reach = ss[0].last;
@@ -480,7 +571,9 @@ export function numbersMarkdown(l) {
 
 /** The feed item when a lane's turn ends. `title` replaces the lane ID (an unnamed lane's card title). */
 export function finishedLine(l, title) {
-  const w = l.waits.count ? `waited on you ${formatDuration(l.waits.ms)} across ${stops(l.waits.count)}` : 'never waited on you';
+  // the Stop that raised this line has just opened a wait: only the waits that have ended are history
+  const c = l.waits.closed ?? { count: l.waits.count, ms: l.waits.ms };
+  const w = c.count ? `waited on you ${formatDuration(c.ms)} across ${stops(c.count)}` : 'never waited on you';
   const t = l.tests.runs ? `, tests ${l.tests.pass}/${l.tests.runs}` : '';
   return `${title ?? l.lane} finished: ${formatDuration(l.wall - l.idle.ms)}, ${w}${t}`;
 }

@@ -146,8 +146,8 @@ without opening Claude Code: `node tools/suzy.mjs mirror test`.
 | Read, Grep, Edit, Write, Bash... | state, station and nameplate activity; one monitor line per call (ok or error) |
 | a test command (`npm test`, `npm run check`, `vitest`...) | CI lamp `running`, then `pass` or `fail` |
 | `git push`, `gh pr create` | the merge station; feed "Pushed ..." / "PR opened from <branch>" |
-| waiting for a permission or your next prompt | at the podium, "waiting on you 12m" (display only; the minutes refresh once a minute) |
-| the turn ends | the card goes to `review`, the agent back to the lounge, and the feed says `VOICE-PROMPT-02 finished: 2h10m, waited on you 23m across 4 stops, tests 6/6` |
+| a permission prompt, a question box (`AskUserQuestion`), or your next prompt | at the podium, "waiting on you 12m" (display only; the minutes refresh once a minute) |
+| the turn ends | the card goes to `review` and the feed says `VOICE-PROMPT-02 finished: 2h10m, waited on you 23m across 4 stops, tests 6/6`. The agent waits at the podium for your next message ("waiting on you 12m"), unless the lane already opened its PR: then it goes back to the lounge |
 | session ends, or 30 min without events | off shift |
 
 More than six live sessions: the extra lanes get task cards without an avatar, and take the
@@ -189,15 +189,21 @@ cache rebuilt from the events on every run. It reads `events.jsonl` and its two 
 lane             wall    active  waited  stops  longest  idle        tests  PR
 ---------------  ------  ------  ------  -----  -------  ----------  -----  ---
 VOICE-PROMPT-02  2h10m   1h22m   23m     3      11m      25m (1)     3/1    yes
-STUDIO-RESUME    16h10m  1h20m   0m      0      0m       14h50m (1)  3/0    yes
+VOICE-PROMPT-03  17h15m  23m     16h52m  1      16h52m   0m          1/0    no
+SMS-CONSENT-02   16h44m  12m     16h32m  2      16h26m   0m          0/0    no
 ```
+
+The last two rows are the founder's real first stats, replayed under the rules below
+(`tools/test/fixtures/mirror-stats/founder-waits.jsonl`): VOICE-PROMPT-03 ended its turn at a
+disk STOP and waited overnight for "continue", and SMS-CONSENT-02 sat on an `AskUserQuestion`
+box all night. Before STUDIO-05 the founder's real table showed the first as 16h52m idle and the second as 16h42m active.
 
 | Number | Definition |
 | --- | --- |
 | lane | The lane ID from the brief. A lane can span several sessions, so numbers group by lane ID, not by session. A session without one is `unnamed-<date>-<n>` (UTC date, numbered in start order) |
 | wall | First to last event of the lane, overnight gaps included |
-| waited on you (stops, longest) | Each Notification (a permission prompt, your next prompt, a question) opens a wait; it closes at that session's next event that is not a Notification. Back to back Notifications are one wait. `auth_success` is not a wait |
-| idle | No events for over 10 minutes while not waiting: the lane is stuck or you are away. A tool that was started and has not reported back is running, not idle |
+| waited on you (stops, longest) | Time the lane waited for you, from any of: **a Stop** (the turn ended, the next message is yours) until your next prompt; **an `AskUserQuestion`** (any tool whose name contains `AskUser`) until its result comes back; **a Notification** (a permission prompt, your next prompt, a question) until the session's next event that is not a Notification. `auth_success` is not a wait. Waits that overlap count once, from the first to the last (a Stop plus the idle nudge 60 seconds later is one wait). A lane that went back to work on its own (a background task finished, no prompt) is no longer waiting |
+| idle | No events for over 10 minutes while not waiting and no tool running: the lane is stuck or you are away. A tool that was started and has not reported back is running, not idle |
 | active | wall minus waited minus idle |
 | tool calls | read (Read, Grep, Glob, LS), edit (Edit, MultiEdit, Write, NotebookEdit), bash, other |
 | files touched | Repo-relative, unique, files an edit tool changed successfully; the count and the top 10 by edits |
@@ -208,9 +214,14 @@ STUDIO-RESUME    16h10m  1h20m   0m      0      0m       14h50m (1)  3/0    yes
 
 Edge cases, each tested:
 
+- **A finished lane is not waiting.** A Stop is not a wait when the lane had already opened its
+  PR, or when it is followed by the session ending (`SessionEnd`, the lane was closed rather
+  than answered). The idle nudge Claude Code sends after a finished lane does not start one
+  either. The time before the exit is then idle, not waited.
 - **A wait still open** at the end of the log is counted as open and measured up to now
   (`12m (open)`). If its session never wrote again but the lane has a later session, the wait
-  ends where that session starts.
+  ends where that session starts. A lane that ended its turn, was never answered and never
+  closed shows an open wait that keeps growing until a prompt or a session end arrives.
 - **Clock skew**: a timestamp that goes backwards is clamped to the previous one and counted
   (`skew` in `--json`); no duration is ever negative.
 - **Rotation**: the log is rotated at 5 MB keeping two old files; `stats` reads all three, once
@@ -223,6 +234,46 @@ Edge cases, each tested:
 section with the same numbers; a lane waiting on you shows `waiting on you 12m` on its nameplate
 (refreshed at most once a minute) and stays on shift for up to 2 hours instead of being sent off
 shift after 30 quiet minutes; and when a turn ends the feed says how long the lane took (wall minus
-idle, waiting included), how long it waited on you and across how many stops, and its tests
-passed over runs. Numbers need events the Foreman applied: a session that was already saved when
+idle, waiting included), how long it waited on you and across how many stops (the waits that have
+ended: the Stop that raised the line has just started a new one), and its tests passed over runs.
+The nameplate, the feed line and `stats` read the same wait, kept by one reducer in
+`tools/mirror/stats.mjs`, so they cannot disagree. Numbers need events the Foreman applied: a session that was already saved when
 this version first ran counts from its next event, and its note says so.
+
+## Get pinged when a lane needs you
+
+The world shows who is waiting, but only if you are looking at it. `notify` follows the same
+mirror events and shows one macOS notification the moment a lane starts waiting on you, or opens a
+PR. It is a separate small command: the hook is unchanged (silent, no child processes, no
+network), and `notify` only reads `~/.agentcraft/mirror/events.jsonl`.
+
+```sh
+node tools/suzy.mjs notify                  # follow the log; Ctrl-C to stop
+node tools/suzy.mjs notify --dry-run        # print what it would show, show nothing
+node tools/suzy.mjs notify --all            # also lanes with no lane ID (labelled repo @ branch)
+node tools/suzy.mjs notify install          # dry run: the launchd agent it would add
+node tools/suzy.mjs notify install --apply  # interactive terminal only: runs notify at every login
+node tools/suzy.mjs notify uninstall --apply
+```
+
+| Moment | Notification |
+| --- | --- |
+| the lane ended its turn and waits for your next message | `Suzy lane waiting`: `VOICE-PROMPT-03 needs you (finished its turn)` |
+| an `AskUserQuestion` box is open | `Suzy lane waiting`: `SMS-CONSENT-02 needs you (asked a question)` |
+| a permission prompt | `Suzy lane waiting`: `STUDIO-05 needs you (needs permission)` |
+| the lane opened its PR | `Suzy lane PR`: `STUDIO-05 opened a PR` |
+
+- **One per wait.** The wait rules are exactly the ones `stats` uses (see Numbers), so a Stop and
+  the idle nudge that follows it are one notification, and a lane that has opened its PR does not
+  also say it finished its turn.
+- **History is not news.** On start it reads what is already in the log silently and lists the
+  lanes waiting right now; after that, only new events notify.
+- **Off macOS** it prints the same lines and shows nothing (there is no `osascript`).
+  `--dry-run` prints them with a `[dry run]` prefix on any machine.
+- **Login item.** `notify install --apply` writes
+  `~/Library/LaunchAgents/dev.agentcraft.suzy-notify.plist` (runs `notify` at login, restarts it if
+  it crashes, logs to `~/.agentcraft/notify.log`) and loads it. Without `--apply` it only prints
+  the plan. `notify uninstall --apply` stops it and deletes the file. Both refuse to run without
+  an interactive terminal, like `mirror install`.
+- A notification for a lane that is then closed a moment later (a Stop followed by `SessionEnd`)
+  still arrives: nothing can tell a Stop that will be answered from one that will not.

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { isTestCommand } from '../../tools/mirror/stats.mjs';
+import { computeLanes, isTestCommand, numbersMarkdown } from '../../tools/mirror/stats.mjs';
 import { MirrorBackend, MIRROR_TEST_RE } from '../src/agents/mirror/index.js';
 import { silentLogger } from '../src/context.js';
 import { Foreman } from '../src/foreman.js';
@@ -70,7 +70,8 @@ describe('mirror backend: lane numbers', () => {
       const body = fm.memory.get('lanes/num-1')!.body;
       expect(body).toContain('## Numbers');
       expect(body).toContain('- Wall time: 15m (2026-10-13 09:00 to 09:15 UTC)');
-      expect(body).toContain('- Waited on you: 9m across 1 stop (longest 9m)');
+      // the permission wait (9m), and the Stop 5 minutes ago that made the lane wait for your next message
+      expect(body).toContain('- Waited on you: 14m across 2 stops (longest 9m), still waiting');
       expect(body).toContain('- Active: 6m');
       expect(body).toContain('- Idle gaps: none');
       expect(body).toContain('- Tool calls: 4 (read 0, edit 2, bash 2, other 0)');
@@ -166,7 +167,7 @@ describe('mirror backend: lane numbers', () => {
     const want = a.fm.memory.get('lanes/num-1')!.body;
     const wantFeed = a.fm.store.data.feed.map((f) => f.text);
     await a.fm.close();
-    expect(want).toContain('- Waited on you: 8m across 1 stop (longest 8m)');
+    expect(want).toContain('- Waited on you: 26m across 2 stops (longest 18m), still waiting'); // 8m, then the Stop 18m ago
 
     const h = home();
     append(h, lines.slice(0, 4));
@@ -205,6 +206,117 @@ describe('mirror backend: lane numbers', () => {
   it('the stats test-command detector agrees with the backend\'s', () => {
     for (const c of ['npm test', 'npm run test', 'npm run check', 'pnpm run check', 'npx vitest run a.test.ts', 'vitest', 'pytest -q', 'go test ./...', 'node --test', 'cd foreman && npm run check', 'tsc --noEmit', 'cargo test', 'git status', 'ls -la', 'npm install', 'npm run build', 'cat tests.txt', 'echo npm test', 'yarn test', 'bun run test']) {
       expect(isTestCommand(c), c).toBe(MIRROR_TEST_RE.test(c));
+    }
+  });
+});
+
+describe('mirror backend: who is waiting on you (STUDIO-05)', () => {
+  const LANE = 'NUM-1';
+  const edit = (m: number, sid = A) => [ev(m, 'PreToolUse', { tool: 'Edit', file: 'a.ts' }, sid), ev(m + 0.1, 'PostToolUse', { tool: 'Edit', file: 'a.ts', ok: true }, sid)];
+
+  it('a lane whose turn ended waits on you for its next message, counting up until you answer', async () => {
+    const h = home();
+    append(h, [...LANE_HEAD, ...edit(1), ev(5, 'Stop')]);
+    const clock = { now: T0 + 5 * MIN };
+    const { fm, backend } = await boot(h, clock);
+    try {
+      expect(agent(fm)).toMatchObject({ state: 'waiting_user', station: 'user', activity: 'waiting on you' });
+      expect(fm.tasks.list()[0]).toMatchObject({ title: LANE, status: 'review' });
+      clock.now = T0 + 5 * MIN + 42 * MIN + 10_000;
+      backend.poll();
+      expect(agent(fm).activity).toBe('waiting on you 42m');
+      append(h, [ev(48, 'UserPromptSubmit')]);
+      backend.poll();
+      expect(agent(fm)).toMatchObject({ state: 'thinking', station: 'desk' });
+      expect(agent(fm).activity).not.toMatch(/waiting on you/);
+      expect(fm.tasks.list()[0]!.status).toBe('doing');
+    } finally {
+      await fm.close();
+    }
+  });
+
+  it('a lane that opened its PR is finished, not waiting: back to the lounge', async () => {
+    const h = home();
+    append(h, [...LANE_HEAD, ...tool(1, 'gh pr create --base suzy --title x'), ev(5, 'Stop'), ev(6, 'Notification', { kind: 'idle_prompt' })]);
+    const { fm } = await boot(h, { now: T0 + 7 * MIN });
+    try {
+      expect(agent(fm)).toMatchObject({ state: 'idle', station: 'lounge', activity: `${LANE}: ready for review` });
+      expect(fm.store.data.feed.map((f) => f.text).some((x) => /waiting for/.test(x))).toBe(false);
+      expect(fm.memory.get('lanes/num-1')!.body).not.toContain('still waiting');
+    } finally {
+      await fm.close();
+    }
+  });
+
+  it('an open AskUserQuestion is a wait from the question to the answer', async () => {
+    const h = home();
+    append(h, [...LANE_HEAD, ev(2, 'PreToolUse', { tool: 'AskUserQuestion' })]);
+    const clock = { now: T0 + 2 * MIN };
+    const { fm, backend } = await boot(h, clock);
+    try {
+      expect(agent(fm)).toMatchObject({ state: 'waiting_user', station: 'user', activity: 'waiting on you' });
+      expect(fm.store.data.feed.map((f) => f.text)).toContain(`Juniper is waiting for your answer in Claude Code (${LANE})`);
+      clock.now = T0 + 2 * MIN + 16 * 60 * MIN;
+      backend.poll(); // more than 2 hours: an abandoned question does not hold an avatar
+      expect(agent(fm)).toMatchObject({ active: false });
+      append(h, [ev(2 + 16 * 60, 'PostToolUse', { tool: 'AskUserQuestion', ok: true })]);
+      backend.poll();
+      expect(agent(fm)).toMatchObject({ active: true, state: 'thinking' });
+      expect(agent(fm).activity).not.toMatch(/waiting on you/);
+    } finally {
+      await fm.close();
+    }
+  });
+
+  it('an unanswered question keeps the lane on the podium for up to 2 hours and says how long', async () => {
+    const h = home();
+    append(h, [...LANE_HEAD, ev(2, 'PreToolUse', { tool: 'AskUserQuestion' })]);
+    const clock = { now: T0 + 2 * MIN };
+    const { fm, backend } = await boot(h, clock);
+    try {
+      clock.now = T0 + 90 * MIN;
+      backend.poll();
+      expect(agent(fm)).toMatchObject({ active: true, state: 'waiting_user', activity: 'waiting on you 1h28m' });
+    } finally {
+      await fm.close();
+    }
+  });
+
+  it('a Stop followed by the session ending is a lane that is done: off shift, no wait counted', async () => {
+    const h = home();
+    append(h, [...LANE_HEAD, ...edit(1), ev(5, 'Stop'), ev(65, 'SessionEnd', { reason: 'prompt_input_exit' })]);
+    const { fm } = await boot(h, { now: T0 + 66 * MIN });
+    try {
+      expect(agent(fm)).toMatchObject({ active: false, activity: 'off shift' });
+      const body = fm.memory.get('lanes/num-1')!.body;
+      expect(body).toContain('- Waited on you: none');
+      expect(body).toContain('- Idle gaps: 1h00m (1)');
+    } finally {
+      await fm.close();
+    }
+  });
+
+  it('agrees with tools/mirror/stats.mjs on the founder\'s two real shapes (the drift guard)', async () => {
+    const fixture = path.join(import.meta.dirname, '..', '..', 'tools', 'test', 'fixtures', 'mirror-stats', 'founder-waits.jsonl');
+    const lines = fs.readFileSync(fixture, 'utf8').trimEnd().split('\n');
+    const events = lines.map((l) => JSON.parse(l));
+    const now = Date.parse('2026-10-14T10:00:00Z');
+    const h = home();
+    append(h, lines);
+    const { fm } = await boot(h, { now });
+    try {
+      const want = computeLanes(events, { now });
+      expect(want.map((l) => l.lane)).toEqual(['VOICE-PROMPT-03', 'SMS-CONSENT-02']);
+      for (const lane of want) {
+        const body = fm.memory.get(`lanes/${lane.lane!.toLowerCase()}`)!.body;
+        // the note's line is the line stats.mjs computes for the same events
+        expect(body).toContain(numbersMarkdown(lane).split('\n').find((l) => l.startsWith('- Waited on you'))!);
+        expect(body).toContain(`- Waited on you: ${lane.lane === 'VOICE-PROMPT-03' ? '16h52m across 1 stop (longest 16h52m)' : '16h32m across 2 stops (longest 16h26m)'}`);
+        expect(body).toContain(`- Active: ${lane.lane === 'VOICE-PROMPT-03' ? '23m' : '12m'}`);
+        expect(body).toContain('- Idle gaps: none');
+      }
+    } finally {
+      await fm.close();
     }
   });
 });

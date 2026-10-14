@@ -11,6 +11,8 @@ import { javaHome } from './lib/java.mjs';
 import { applyRefusal as mirrorApplyRefusal, claudeSettingsFile, hookCommand, hooksBlock, installHooks, restoreBytes, uninstallHooks } from './lib/mirror-settings.mjs';
 import { appendEvent, mirrorDir } from './mirror/lib.mjs';
 import { computeLanes, laneMarkdown, lanesMarkdown, lanesTable, readEvents, writeLanesCache } from './mirror/stats.mjs';
+import { NOTIFY_TITLE, osascriptDeliver, shouldDeliver, watchEvents } from './mirror/notify.mjs';
+import { agentApplyRefusal, launchAgentFile, plistText } from './lib/notify-agent.mjs';
 import {
   BASE, LANE_FILE, PROFILE, STUDIO_FLAGS, applyRefusal, briefNote, changedPaths, ciCommand, fastCiSteps, findEnvFiles,
   fullCiSteps, goalText, laneName, launchArgs, maxWarnings, originMatches, parseJob, parseProbe, prUrl, renderReport, studioFlagGap, testCounts,
@@ -40,14 +42,19 @@ Mirror mode (watch your own Claude Code sessions in the world; no agents, no API
   node tools/suzy.mjs stats [--lane <ID>] [--since YYYY-MM-DD] [--md | --json]
                                                   per-lane numbers from the mirror events (read only, local):
                                                   wall, active, waited on you, idle, tests, PR
+  node tools/suzy.mjs notify [--all] [--dry-run]  follow the mirror events and show one macOS notification when a
+                                                  lane starts waiting on you (a question, a finished turn, a
+                                                  permission) or opens a PR; lanes with no ID only with --all
+  node tools/suzy.mjs notify install [--apply]    a launchd agent that runs notify at login (dry run first)
+  node tools/suzy.mjs notify uninstall [--apply]  remove it
 
 Common: --studio PATH (default ~/suzy-studio, env SUZY_STUDIO), --home PATH (default ~/.agentcraft,
 env AGENTCRAFT_HOME), --port N (Foreman, default 7878). Testing only: --backend sim, --no-game.`);
   process.exit(code);
 }
 
-const VALUES = new Set(['brief', 'lead-model', 'worker-model', 'workers', 'max-budget', 'studio', 'home', 'port', 'base', 'backend', 'profile', 'out', 'lane', 'since']);
-const SWITCHES = new Set(['resume', 'archive-previous', 'dry-run', 'no-launch', 'no-game', 'apply', 'game', 'foreman', 'help', 'fast', 'md', 'json']);
+const VALUES = new Set(['brief', 'lead-model', 'worker-model', 'workers', 'max-budget', 'studio', 'home', 'port', 'base', 'backend', 'profile', 'out', 'lane', 'since', 'poll-ms']);
+const SWITCHES = new Set(['resume', 'archive-previous', 'dry-run', 'no-launch', 'no-game', 'apply', 'game', 'foreman', 'help', 'fast', 'md', 'json', 'all']);
 
 export function options(argv) {
   const out = { action: argv[0], positional: [] };
@@ -67,6 +74,7 @@ export function options(argv) {
   out.backend ??= 'claude';
   if (!['claude', 'sim'].includes(out.backend)) throw new Error('--backend must be claude or sim');
   if (out['max-budget'] !== undefined && !(Number(out['max-budget']) > 0)) throw new Error('--max-budget must be a positive number of USD');
+  if (out['poll-ms'] !== undefined && !(Number(out['poll-ms']) >= 10)) throw new Error('--poll-ms must be a number of milliseconds, 10 or more');
   return out;
 }
 
@@ -562,7 +570,94 @@ function stats(opt) {
   return 0;
 }
 
-const ACTIONS = { doctor: (o) => (doctor(o), 0), start, ci, ship, report, status, stop, watch, mirror, stats };
+// ---------------------------------------------------------------------------------------------
+// notify: a macOS notification when a lane needs you (tools/mirror/notify.mjs), and its login item
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Add or remove the launchd agent that runs `notify` at login. Everything outside the machine's
+ * state is a parameter, so tests give it a temp HOME, a stub launchctl and a fake terminal.
+ */
+export function notifyAgent(opt, remove, { env = process.env, isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY), platform = process.platform,
+  uid = process.getuid?.() ?? 0, launchctl = (args) => spawnSync('launchctl', args, { encoding: 'utf8' }), out = console.log } = {}) {
+  if (platform !== 'darwin') refuse('notify install and uninstall use launchd, which is macOS only. On this machine `notify` prints its lines instead of showing notifications.');
+  if (opt.apply) {
+    const why = agentApplyRefusal(isTTY);
+    if (why) refuse(why);
+  }
+  const file = launchAgentFile(env);
+  const log = path.join(opt.home, 'notify.log');
+  const want = plistText({ node: process.execPath, script: path.join(tools, 'suzy.mjs'), home: opt.home, log });
+  const have = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined;
+  const domain = `gui/${uid}`;
+  out(`launchd agent: ${file}${have === undefined ? ' (does not exist yet)' : ''}`);
+  if (remove) {
+    if (have === undefined) {
+      out('\nNot installed: nothing to remove.');
+      return 0;
+    }
+    if (!opt.apply) {
+      out('\nDry run: this would stop the agent and delete that file. Nothing was changed. To apply: node tools/suzy.mjs notify uninstall --apply');
+      return 0;
+    }
+    launchctl(['bootout', `${domain}/dev.agentcraft.suzy-notify`]); // fine if it was not loaded
+    fs.rmSync(file, { force: true });
+    out('\nDone: the agent is stopped and its file removed.');
+    return 0;
+  }
+  out(`\nIt runs at login:\n  ${process.execPath} ${path.join(tools, 'suzy.mjs')} notify --home ${opt.home}\nand keeps a log at ${log}. It only reads ${path.join(opt.home, 'mirror', 'events.jsonl')} and shows notifications; it never touches your lanes.`);
+  if (have === want) {
+    out('\nAlready installed: nothing to change.');
+    return 0;
+  }
+  if (!opt.apply) {
+    out(`\nDry run: this would ${have === undefined ? 'write' : 'update'} that file and start the agent now. Nothing was written. To apply: node tools/suzy.mjs notify install --apply`);
+    return 0;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(opt.home, { recursive: true });
+  fs.writeFileSync(file, want, { mode: 0o644 });
+  launchctl(['bootout', `${domain}/dev.agentcraft.suzy-notify`]); // replace a loaded older copy
+  const r = launchctl(['bootstrap', domain, file]);
+  out(`\nDone: wrote the agent.${r?.status === 0 ? ' It is running now and starts at every login.' : ` It starts at your next login; to start it now: launchctl bootstrap ${domain} ${file}`}`);
+  return 0;
+}
+
+/** Follow the mirror events until stopped; one notification per wait, one per PR. */
+function notifyRun(opt, { out = console.log, platform = process.platform } = {}) {
+  const dir = mirrorDir({ ...process.env, AGENTCRAFT_HOME: opt.home });
+  const dryRun = Boolean(opt['dry-run']);
+  const show = shouldDeliver({ platform, dryRun });
+  const mode = dryRun ? 'dry run: printing only' : show ? 'macOS notifications' : `${platform} has no osascript: printing only`;
+  const deliver = (title, body) => {
+    out(`${dryRun ? '[dry run] ' : ''}${title}: ${body}`);
+    if (show) osascriptDeliver(title, body, { onError: (e) => console.error(`suzy notify: osascript failed: ${e.message}`) });
+  };
+  const w = watchEvents({
+    dir, all: Boolean(opt.all), deliver, pollMs: opt['poll-ms'] ? Number(opt['poll-ms']) : 1000,
+    onError: (e) => console.error(`suzy notify: ${e.message}`),
+  });
+  out(`notify: watching ${path.join(dir, 'events.jsonl')} (${mode}${opt.all ? ', all lanes' : ', lanes with an ID'})`);
+  for (const x of w.waitingNow) out(`  waiting on you now: ${x.lane} (since ${new Date(x.since).toISOString().slice(0, 16).replace('T', ' ')} UTC)`);
+  return new Promise((resolve) => {
+    const done = () => {
+      w.stop();
+      resolve(0);
+    };
+    process.once('SIGINT', done);
+    process.once('SIGTERM', done);
+  });
+}
+
+function notify(opt) {
+  const sub = opt.positional[0];
+  if (sub === 'install') return notifyAgent(opt, false);
+  if (sub === 'uninstall') return notifyAgent(opt, true);
+  if (sub !== undefined) refuse(`notify: unknown subcommand "${sub}" (use notify, notify install or notify uninstall)`);
+  return notifyRun(opt);
+}
+
+const ACTIONS = { doctor: (o) => (doctor(o), 0), start, ci, ship, report, status, stop, watch, mirror, stats, notify };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
