@@ -1,0 +1,68 @@
+{"v":1,"ts":1791795600000,"sid":"a1a1a1a1a1a1a1a1","event":"SessionStart","repo":"agentcraft","branch":"voice-prompt-02","model":"claude-opus-5-5","source":"startup"}
+{"v":1,"ts":1791795605000,"sid":"a1a1a1a1a1a1a1a1","event":"UserPromptSubmit","repo":"agentcraft","branch":"voice-prompt-02","first":true,"lane":"VOICE-PROMPT-02"}
+{"v":1,"ts":1791795660000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Read","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791795662000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Read","file":"foreman/src/voice.ts","ok":true}
+{"v":1,"ts":1791795690000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Grep"}
+{"v":1,"ts":1791795691000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Grep","ok":true}
+{"v":1,"ts":1791795900000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791795902000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts","ok":true}
+{"v":1,"ts":1791796080000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Write","file":"foreman/src/voice-prompt.ts"}
+{"v":1,"ts":1791796082000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Write","file":"foreman/src/voice-prompt.ts","ok":true}
+{"v":1,"ts":1791796200000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npm run check"}
+{"v":1,"ts":1791797040000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUseFailure","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npm run check","ok":false,"exit":1}
+{"v":1,"ts":1791797400000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791797401000,"sid":"a1a1a1a1a1a1a1a1","event":"Notification","repo":"agentcraft","branch":"voice-prompt-02","kind":"permission_prompt"}
+{"v":1,"ts":1791797941000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts","ok":true}
+{"v":1,"ts":1791798060000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npm run check"}
+{"v":1,"ts":1791798150000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npm run check","ok":true}
+{"v":1,"ts":1791798180000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npx vitest run test/voice.test.ts"}
+{"v":1,"ts":1791798200000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npx vitest run test/voice.test.ts","ok":true}
+{"v":1,"ts":1791798600000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"git push -u origin voice-prompt-02"}
+{"v":1,"ts":1791798601000,"sid":"a1a1a1a1a1a1a1a1","event":"Notification","repo":"agentcraft","branch":"voice-prompt-02","kind":"permission_prompt"}
+{"v":1,"ts":1791798781000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"git push -u origin voice-prompt-02","ok":true}
+{"v":1,"ts":1791798840000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"gh pr create --base suzy --title \"VOICE-PROMPT-02\""}
+{"v":1,"ts":1791798850000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"gh pr create --base suzy --title \"VOICE-PROMPT-02\"","ok":true}
+{"v":1,"ts":1791799080000,"sid":"a1a1a1a1a1a1a1a1","event":"Stop","repo":"agentcraft","branch":"voice-prompt-02"}
+{"v":1,"ts":1791800580000,"sid":"a1a1a1a1a1a1a1a1","event":"UserPromptSubmit","repo":"agentcraft","branch":"voice-prompt-02","first":false}
+{"v":1,"ts":1791800640000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Read","file":"docs/suzy/STUDIO-README.md"}
+{"v":1,"ts":1791800642000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Read","file":"docs/suzy/STUDIO-README.md","ok":true}
+{"v":1,"ts":1791800760000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"docs/suzy/STUDIO-README.md"}
+{"v":1,"ts":1791800762000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"docs/suzy/STUDIO-README.md","ok":true}
+{"v":1,"ts":1791801000000,"sid":"a1a1a1a1a1a1a1a1","event":"Notification","repo":"agentcraft","branch":"voice-prompt-02","kind":"elicitation_dialog"}
+{"v":1,"ts":1791801660000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791801662000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUseFailure","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts","ok":false}
+{"v":1,"ts":1791801900000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791801902000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Edit","file":"foreman/src/voice.ts","ok":true}
+{"v":1,"ts":1791802320000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npm run check"}
+{"v":1,"ts":1791802410000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Bash","cmd":"npm run check","ok":true}
+{"v":1,"ts":1791802680000,"sid":"a1a1a1a1a1a1a1a1","event":"PreToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Read","file":"foreman/src/voice.ts"}
+{"v":1,"ts":1791802682000,"sid":"a1a1a1a1a1a1a1a1","event":"PostToolUse","repo":"agentcraft","branch":"voice-prompt-02","tool":"Read","file":"foreman/src/voice.ts","ok":true}
+{"v":1,"ts":1791803100000,"sid":"a1a1a1a1a1a1a1a1","event":"Stop","repo":"agentcraft","branch":"voice-prompt-02"}
+{"v":1,"ts":1791803400000,"sid":"a1a1a1a1a1a1a1a1","event":"SessionEnd","repo":"agentcraft","branch":"voice-prompt-02","reason":"prompt_input_exit"}
+{"v":1,"ts":1791824400000,"sid":"b2b2b2b2b2b2b2b2","event":"SessionStart","repo":"agentcraft","branch":"studio/resume","model":"claude-sonnet-5-5","source":"startup"}
+{"v":1,"ts":1791824403000,"sid":"b2b2b2b2b2b2b2b2","event":"UserPromptSubmit","repo":"agentcraft","branch":"studio/resume","first":true,"lane":"STUDIO-RESUME"}
+{"v":1,"ts":1791824520000,"sid":"b2b2b2b2b2b2b2b2","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Read","file":"tools/suzy.mjs"}
+{"v":1,"ts":1791824521000,"sid":"b2b2b2b2b2b2b2b2","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Read","file":"tools/suzy.mjs","ok":true}
+{"v":1,"ts":1791825000000,"sid":"b2b2b2b2b2b2b2b2","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Edit","file":"tools/suzy.mjs"}
+{"v":1,"ts":1791825001000,"sid":"b2b2b2b2b2b2b2b2","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Edit","file":"tools/suzy.mjs","ok":true}
+{"v":1,"ts":1791825480000,"sid":"b2b2b2b2b2b2b2b2","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Read","file":"tools/README.md"}
+{"v":1,"ts":1791825481000,"sid":"b2b2b2b2b2b2b2b2","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Read","file":"tools/README.md","ok":true}
+{"v":1,"ts":1791825900000,"sid":"b2b2b2b2b2b2b2b2","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"node --test"}
+{"v":1,"ts":1791825940000,"sid":"b2b2b2b2b2b2b2b2","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"node --test","ok":true}
+{"v":1,"ts":1791826500000,"sid":"b2b2b2b2b2b2b2b2","event":"Stop","repo":"agentcraft","branch":"studio/resume"}
+{"v":1,"ts":1791826800000,"sid":"b2b2b2b2b2b2b2b2","event":"SessionEnd","repo":"agentcraft","branch":"studio/resume","reason":"prompt_input_exit"}
+{"v":1,"ts":1791880200000,"sid":"c3c3c3c3c3c3c3c3","event":"SessionStart","repo":"agentcraft","branch":"studio/resume","model":"claude-sonnet-5-5","source":"resume"}
+{"v":1,"ts":1791880210000,"sid":"c3c3c3c3c3c3c3c3","event":"UserPromptSubmit","repo":"agentcraft","branch":"studio/resume","first":true}
+{"v":1,"ts":1791880320000,"sid":"c3c3c3c3c3c3c3c3","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Edit","file":"tools/suzy.mjs"}
+{"v":1,"ts":1791880321000,"sid":"c3c3c3c3c3c3c3c3","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Edit","file":"tools/suzy.mjs","ok":true}
+{"v":1,"ts":1791880500000,"sid":"c3c3c3c3c3c3c3c3","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Write","file":"tools/test/suzy-resume.test.mjs"}
+{"v":1,"ts":1791880501000,"sid":"c3c3c3c3c3c3c3c3","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Write","file":"tools/test/suzy-resume.test.mjs","ok":true}
+{"v":1,"ts":1791880920000,"sid":"c3c3c3c3c3c3c3c3","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"node --test"}
+{"v":1,"ts":1791880965000,"sid":"c3c3c3c3c3c3c3c3","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"node --test","ok":true}
+{"v":1,"ts":1791881340000,"sid":"c3c3c3c3c3c3c3c3","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"git push -u origin studio/resume"}
+{"v":1,"ts":1791881345000,"sid":"c3c3c3c3c3c3c3c3","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"git push -u origin studio/resume","ok":true}
+{"v":1,"ts":1791881700000,"sid":"c3c3c3c3c3c3c3c3","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Read","file":"tools/README.md"}
+{"v":1,"ts":1791881701000,"sid":"c3c3c3c3c3c3c3c3","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Read","file":"tools/README.md","ok":true}
+{"v":1,"ts":1791882120000,"sid":"c3c3c3c3c3c3c3c3","event":"PreToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"node --test"}
+{"v":1,"ts":1791882150000,"sid":"c3c3c3c3c3c3c3c3","event":"PostToolUse","repo":"agentcraft","branch":"studio/resume","tool":"Bash","cmd":"node --test","ok":true}
+{"v":1,"ts":1791882600000,"sid":"c3c3c3c3c3c3c3c3","event":"Stop","repo":"agentcraft","branch":"studio/resume"}

@@ -146,8 +146,8 @@ without opening Claude Code: `node tools/suzy.mjs mirror test`.
 | Read, Grep, Edit, Write, Bash... | state, station and nameplate activity; one monitor line per call (ok or error) |
 | a test command (`npm test`, `npm run check`, `vitest`...) | CI lamp `running`, then `pass` or `fail` |
 | `git push`, `gh pr create` | the merge station; feed "Pushed ..." / "PR opened from <branch>" |
-| waiting for a permission or your next prompt | at the podium, "waiting for you" (display only) |
-| the turn ends | the card goes to `review`, the agent back to the lounge |
+| waiting for a permission or your next prompt | at the podium, "waiting on you 12m" (display only; the minutes refresh once a minute) |
+| the turn ends | the card goes to `review`, the agent back to the lounge, and the feed says `VOICE-PROMPT-02 finished: 2h10m, waited on you 23m across 4 stops, tests 6/6` |
 | session ends, or 30 min without events | off shift |
 
 More than six live sessions: the extra lanes get task cards without an avatar, and take the
@@ -167,3 +167,62 @@ contents, tool output or environment; an `.env*` file other than `.env.example` 
 base64 or hex runs) become `[redacted]`. The hook prints nothing, always exits 0, never touches
 the network, and Claude Code runs it in the background (`"async": true`), so it cannot slow a
 lane.
+
+## Numbers: where each lane's time went
+
+Every mirrored lane gets numbers computed from the same events, locally, with no API and no
+network. They show where the time went, above all how long each lane waited on you.
+
+```sh
+node tools/suzy.mjs stats                              # lanes of the last 7 days, as a table
+node tools/suzy.mjs stats --since 2026-10-01           # from a date (UTC)
+node tools/suzy.mjs stats --lane VOICE-PROMPT-02 --md  # one lane as a block to paste into a PR body
+node tools/suzy.mjs stats --json                       # machine output for later tooling
+```
+
+`stats` is read only. It writes nothing except `~/.agentcraft/mirror/lanes.json` (mode 600), a
+cache rebuilt from the events on every run. It reads `events.jsonl` and its two rotated files.
+`--lane` looks at every lane unless you give `--since`. Example (the recorded fixture in
+`tools/test/fixtures/mirror-stats/`):
+
+```text
+lane             wall    active  waited  stops  longest  idle        tests  PR
+---------------  ------  ------  ------  -----  -------  ----------  -----  ---
+VOICE-PROMPT-02  2h10m   1h22m   23m     3      11m      25m (1)     3/1    yes
+STUDIO-RESUME    16h10m  1h20m   0m      0      0m       14h50m (1)  3/0    yes
+```
+
+| Number | Definition |
+| --- | --- |
+| lane | The lane ID from the brief. A lane can span several sessions, so numbers group by lane ID, not by session. A session without one is `unnamed-<date>-<n>` (UTC date, numbered in start order) |
+| wall | First to last event of the lane, overnight gaps included |
+| waited on you (stops, longest) | Each Notification (a permission prompt, your next prompt, a question) opens a wait; it closes at that session's next event that is not a Notification. Back to back Notifications are one wait. `auth_success` is not a wait |
+| idle | No events for over 10 minutes while not waiting: the lane is stuck or you are away. A tool that was started and has not reported back is running, not idle |
+| active | wall minus waited minus idle |
+| tool calls | read (Read, Grep, Glob, LS), edit (Edit, MultiEdit, Write, NotebookEdit), bash, other |
+| files touched | Repo-relative, unique, files an edit tool changed successfully; the count and the top 10 by edits |
+| tests | Runs of a test command (the ones that move the CI lamp), passed and failed; the first-run pass rate is the share of distinct commands whose first run passed |
+| PR | `yes` if the lane ran `gh pr create` or pushed its own branch (branch name only) |
+| errors | Tool calls that failed |
+| model | The model the session reported on start (the latest, when it changed) |
+
+Edge cases, each tested:
+
+- **A wait still open** at the end of the log is counted as open and measured up to now
+  (`12m (open)`). If its session never wrote again but the lane has a later session, the wait
+  ends where that session starts.
+- **Clock skew**: a timestamp that goes backwards is clamped to the previous one and counted
+  (`skew` in `--json`); no duration is ever negative.
+- **Rotation**: the log is rotated at 5 MB keeping two old files; `stats` reads all three, once
+  each. Anything older than that is gone, and so are its numbers.
+- **A lane resumed the next day** is one lane. If the resumed session reports `resume` and carries
+  no brief, it joins the lane most recently seen on the same repo and branch; a plain new session
+  on the same branch stays its own unnamed lane.
+
+**In the world.** The lane's library note (`memory/lanes/<lane>.md`) opens with a `## Numbers`
+section with the same numbers; a lane waiting on you shows `waiting on you 12m` on its nameplate
+(refreshed at most once a minute) and stays on shift for up to 2 hours instead of being sent off
+shift after 30 quiet minutes; and when a turn ends the feed says how long the lane took (wall minus
+idle, waiting included), how long it waited on you and across how many stops, and its tests
+passed over runs. Numbers need events the Foreman applied: a session that was already saved when
+this version first ran counts from its next event, and its note says so.

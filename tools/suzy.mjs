@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { javaHome } from './lib/java.mjs';
 import { applyRefusal as mirrorApplyRefusal, claudeSettingsFile, hookCommand, hooksBlock, installHooks, restoreBytes, uninstallHooks } from './lib/mirror-settings.mjs';
 import { appendEvent, mirrorDir } from './mirror/lib.mjs';
+import { computeLanes, laneMarkdown, lanesMarkdown, lanesTable, readEvents, writeLanesCache } from './mirror/stats.mjs';
 import {
   BASE, LANE_FILE, PROFILE, STUDIO_FLAGS, applyRefusal, briefNote, changedPaths, ciCommand, fastCiSteps, findEnvFiles,
   fullCiSteps, goalText, laneName, launchArgs, maxWarnings, originMatches, parseJob, parseProbe, prUrl, renderReport, studioFlagGap, testCounts,
@@ -36,14 +37,17 @@ Mirror mode (watch your own Claude Code sessions in the world; no agents, no API
   node tools/suzy.mjs mirror uninstall [--apply]  remove only the mirror hook's entries
   node tools/suzy.mjs mirror test [--fast]        append a synthetic session so you see an agent move
   node tools/suzy.mjs watch [--no-game]           the Foreman (--backend mirror --profile mirror) plus the game
+  node tools/suzy.mjs stats [--lane <ID>] [--since YYYY-MM-DD] [--md | --json]
+                                                  per-lane numbers from the mirror events (read only, local):
+                                                  wall, active, waited on you, idle, tests, PR
 
 Common: --studio PATH (default ~/suzy-studio, env SUZY_STUDIO), --home PATH (default ~/.agentcraft,
 env AGENTCRAFT_HOME), --port N (Foreman, default 7878). Testing only: --backend sim, --no-game.`);
   process.exit(code);
 }
 
-const VALUES = new Set(['brief', 'lead-model', 'worker-model', 'workers', 'max-budget', 'studio', 'home', 'port', 'base', 'backend', 'profile', 'out']);
-const SWITCHES = new Set(['resume', 'archive-previous', 'dry-run', 'no-launch', 'no-game', 'apply', 'game', 'foreman', 'help', 'fast']);
+const VALUES = new Set(['brief', 'lead-model', 'worker-model', 'workers', 'max-budget', 'studio', 'home', 'port', 'base', 'backend', 'profile', 'out', 'lane', 'since']);
+const SWITCHES = new Set(['resume', 'archive-previous', 'dry-run', 'no-launch', 'no-game', 'apply', 'game', 'foreman', 'help', 'fast', 'md', 'json']);
 
 export function options(argv) {
   const out = { action: argv[0], positional: [] };
@@ -497,7 +501,68 @@ function mirror(opt) {
   refuse('usage: node tools/suzy.mjs mirror install|uninstall [--apply] | mirror test [--fast]');
 }
 
-const ACTIONS = { doctor: (o) => (doctor(o), 0), start, ci, ship, report, status, stop, watch, mirror };
+// ---------------------------------------------------------------------------------------------
+// stats: per-lane numbers from the mirror events (tools/mirror/stats.mjs)
+// ---------------------------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60_000;
+
+/** `--since YYYY-MM-DD` as UTC midnight. */
+function parseSince(text) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  const ts = m ? Date.parse(`${text}T00:00:00Z`) : Number.NaN;
+  if (!m || Number.isNaN(ts) || new Date(ts).toISOString().slice(0, 10) !== text) refuse(`--since must be a date like 2026-10-01 (UTC), got "${text}"`);
+  return ts;
+}
+
+/**
+ * The lanes `stats` shows: all of them (what the cache keeps), and the ones in the window. With no
+ * --since the window is the last 7 days, except for --lane, which looks at everything.
+ */
+export function statsReport(events, opt, now = Date.now()) {
+  const all = computeLanes(events, { now });
+  let since = opt.since !== undefined ? parseSince(opt.since) : opt.lane ? null : now - 7 * DAY_MS;
+  let lanes = since === null ? all : all.filter((l) => l.end >= since);
+  if (opt.lane) {
+    const want = String(opt.lane).toLowerCase();
+    lanes = lanes.filter((l) => l.lane.toLowerCase() === want);
+    if (!lanes.length) {
+      const known = all.map((l) => l.lane);
+      refuse(`no lane ${opt.lane} in the mirror events${known.length ? ` (known: ${known.slice(-10).join(', ')})` : ''}`);
+    }
+  }
+  return { all, lanes, since };
+}
+
+function stats(opt) {
+  if (opt.positional.length) refuse(`stats takes no argument (got ${opt.positional.join(' ')}); use --lane <ID>`);
+  if (opt.md && opt.json) refuse('--md and --json are two formats: pick one');
+  if (opt.since !== undefined) parseSince(opt.since);
+  const dir = mirrorDir({ ...process.env, AGENTCRAFT_HOME: opt.home });
+  const { events, files } = readEvents(dir);
+  if (!files.length) {
+    console.log(`no mirror events yet in ${dir}: install the hook once (node tools/suzy.mjs mirror install), then use Claude Code as usual`);
+    return 0;
+  }
+  const now = Date.now();
+  const { all, lanes, since } = statsReport(events, opt, now);
+  try {
+    writeLanesCache(dir, all, { now, files });
+  } catch (e) {
+    console.warn(`suzy stats: could not write the lanes.json cache: ${e.message}`);
+  }
+  if (opt.json) {
+    console.log(JSON.stringify({ generatedAt: new Date(now).toISOString(), since: since === null ? null : new Date(since).toISOString(), lanes }, null, 2));
+  } else if (opt.md) {
+    console.log(opt.lane ? laneMarkdown(lanes[0]) : lanesMarkdown(lanes));
+  } else {
+    console.log(`lanes${since === null ? '' : ` since ${new Date(since).toISOString().slice(0, 10)} (UTC)`}, from ${dir}`);
+    console.log(lanesTable(lanes));
+  }
+  return 0;
+}
+
+const ACTIONS = { doctor: (o) => (doctor(o), 0), start, ci, ship, report, status, stop, watch, mirror, stats };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
